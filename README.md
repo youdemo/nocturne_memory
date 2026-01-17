@@ -168,6 +168,34 @@ npm run dev
 
 之后 AI 就可以通过 `read_memory`、`patch_memory` 等工具操作你的知识库了。
 
+### 5. 使用 SSE/HTTP 传输协议（可选）
+
+上述配置使用的是 **Stdio 传输协议**（通过标准输入输出流通信），适用于 Claude Desktop、Cursor、Gemini CLI 等本地工具。
+
+但如果你使用的 MCP 客户端 **只支持 SSE 或 HTTP 协议**（例如某些 Web 应用、[MuMuAINovel](https://github.com/xiamuceer-j/MuMuAINovel) 等），则需要以 SSE 模式启动服务器：
+
+```bash
+cd backend
+
+# 默认运行在 8000 端口
+python run_sse.py
+
+# 如果 8000 被占用，可以指定其他端口：
+# Linux/macOS:
+PORT=8100 python run_sse.py
+# Windows PowerShell:
+$env:PORT="8100"; python run_sse.py
+```
+
+启动后，在你的 MCP 客户端配置中填写：
+
+| 配置项 | 值 |
+|--------|------|
+| 传输协议 | SSE 或 streamable-http |
+| URL | `http://localhost:8000/sse` |
+
+> ⚠️ **注意**：SSE 模式需要保持 `run_sse.py` 进程持续运行。如果你需要长期运行，建议使用 `nohup`、`systemd` 或 Docker 等方式管理进程。
+
 ---
 
 ---
