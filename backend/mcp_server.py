@@ -586,12 +586,10 @@ async def read_memory(resource_id: str) -> str:
                         snippet = raw_snippet[:60] + " [truncated]"
                     else:
                         snippet = raw_snippet
-                    inheritable = r.get('inheritable', True)
-                    # Show the chap: ID format for easy copy-paste
+                    # Show the chap: ID format for easy copy-paste (chapter name is already in the ID)
                     chap_id = f"chap:{viewer_id}>{target_id}:{chapter_name}"
-                    lines.append(f"- [{i+1}] {chapter_name} (inheritable: {inheritable})")
-                    lines.append(f"  ID: {chap_id}")
-                    lines.append(f"  Snippet: {snippet}")
+                    lines.append(f"- [{i+1}] {chap_id}")
+                    lines.append(f"  {snippet}")
             else:
                 lines.append("(No chapters recorded.)")
             
@@ -686,21 +684,15 @@ async def read_memory(resource_id: str) -> str:
             if outbound_edges:
                 for edge in outbound_edges:
                     target_id = edge['target_entity_id']
-                    target_name = edge['target_name']
                     relation = edge['relation']
                     snippet = edge['content_snippet'].replace('\n', ' ')
                     relay_count = edge['relay_count']
-                    inheritable = edge['inheritable']
-                    viewer_ver = edge['viewer_version']
-                    target_ver = edge['target_version']
                     
                     rel_id = f"rel:{entity_id}>{target_id}"
+                    chap_suffix = f" ({relay_count} chapters)" if relay_count > 0 else ""
                     
-                    lines.append(f"### → {relation}: {target_name} ({target_id})")
-                    lines.append(f"   Connection: v{viewer_ver} -> v{target_ver}")
-                    lines.append(f"   ID: {rel_id}")
-                    lines.append(f"   Chapters: {relay_count} | Inheritable: {inheritable}")
-                    lines.append(f"   Summary: {snippet}")
+                    lines.append(f"- {relation}{chap_suffix}: {rel_id}")
+                    lines.append(f"  {snippet}")
                     lines.append("")
             else:
                 lines.append("(No outbound relations recorded.)")
@@ -718,15 +710,11 @@ async def read_memory(resource_id: str) -> str:
             if children:
                 for i, child in enumerate(children):
                     child_id = child['entity_id']
-                    child_name = child['name']
                     child_type = child['node_type']
                     child_snippet = child['content_snippet'].replace('\n', ' ')
-                    child_ver = child['version']
                     
-                    lines.append(f"### [{i+1}] {child_name} ({child_type})")
-                    lines.append(f"   ID: {child_id}")
-                    lines.append(f"   Version: v{child_ver}")
-                    lines.append(f"   Summary: {child_snippet}")
+                    lines.append(f"- [{i+1}] ({child_type}) {child_id}")
+                    lines.append(f"  {child_snippet}")
                     lines.append("")
             else:
                 lines.append("(No children recorded.)")
@@ -926,7 +914,7 @@ async def create_memory_chapter(
     
     A "chapter" is a discrete memory unit - an event, a conversation, a realization.
     Chapters live under a Direct Edge (relationship overview).
-
+    
     Args:
         resource_id: The parent relationship in format "rel:viewer>target"
         title: Chapter title (becomes part of the chap: ID, e.g. "first_meeting")
@@ -939,6 +927,9 @@ async def create_memory_chapter(
         The relationship (rel:viewer>target) must already exist.
         Use create_relationship to establish one first if needed.
     """
+    # Pre-process: Sanitize title as it becomes part of the ID/Relation
+    title = title.strip().replace(" ", "_")
+
     client = get_neo4j_client()
     try:
         res_type, params = _parse_resource_id(resource_id)
@@ -1050,6 +1041,9 @@ async def create_entity(
     
     After creating an entity, use create_relationship to connect it to others.
     """
+    # Pre-process: Sanitize ID to ensure consistency across DB, Snapshot, and Echo
+    entity_id = entity_id.strip().replace(" ", "_")
+    
     client = get_neo4j_client()
     try:
         result = client.create_entity(
@@ -1095,6 +1089,14 @@ async def create_relationship(
     - read_memory("rel:viewer>target") to view it
     - create_memory_chapter("rel:viewer>target", title, content) to add specific memories
     """
+    # Pre-process: Sanitize inputs
+    viewer_id = viewer_id.strip()
+    target_id = target_id.strip()
+    # relation is a display label and part of internal edge_id, but NOT part of the MCP Resource ID (rel:viewer>target).
+    # We allow spaces in relation names for better readability (e.g. "Best Friend"), 
+    # as long as it doesn't contain double underscores (checked by backend).
+    relation = relation.strip()
+
     client = get_neo4j_client()
     try:
         # Get current states for both entities
