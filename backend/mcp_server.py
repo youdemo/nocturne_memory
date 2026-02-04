@@ -17,7 +17,7 @@ import re
 import sys
 import uuid
 from datetime import datetime
-from typing import List, Optional, Dict, Tuple
+from typing import Optional, Tuple
 from dotenv import load_dotenv, find_dotenv
 
 # Ensure we can import from backend modules
@@ -49,7 +49,7 @@ mcp = FastMCP("Nocturne Memory Interface")
 # =============================================================================
 # Valid domains (protocol prefixes)
 # =============================================================================
-VALID_DOMAINS = [d.strip() for d in os.getenv("VALID_DOMAINS", "core,writer,game,notes").split(",")]
+VALID_DOMAINS = [d.strip() for d in os.getenv("VALID_DOMAINS", "core,writer,game,notes,system").split(",")]
 DEFAULT_DOMAIN = "core"
 
 # =============================================================================
@@ -215,7 +215,7 @@ async def _snapshot_create_memory(uri: str, memory_id: int) -> bool:
 async def _fetch_and_format_memory(client, uri: str) -> str:
     """
     Internal helper to fetch memory data and return formatted string.
-    Used by both read_memory tool and get_core_memories resource to ensure consistency.
+    Used by read_memory tool.
     """
     domain, path = parse_uri(uri)
     
@@ -280,6 +280,98 @@ async def _fetch_and_format_memory(client, uri: str) -> str:
     return "\n".join(lines)
 
 
+async def _generate_boot_memory_view() -> str:
+    """
+    Internal helper to generate the system boot memory view.
+    (Formerly system://core)
+    """
+    client = get_sqlite_client()
+    results = []
+    loaded = 0
+    failed = []
+    
+    for uri in CORE_MEMORY_URIS:
+        try:
+            content = await _fetch_and_format_memory(client, uri)
+            results.append(content)
+            loaded += 1
+        except Exception as e:
+            # e.g. not found or other error
+            failed.append(f"- {uri}: {str(e)}")
+    
+    # Build output
+    output_parts = []
+    
+    output_parts.append("# Nocturne's Core Memories")
+    output_parts.append(f"# Loaded: {loaded}/{len(CORE_MEMORY_URIS)} memories")
+    output_parts.append("")
+    
+    if failed:
+        output_parts.append("## Failed to load:")
+        output_parts.extend(failed)
+        output_parts.append("")
+    
+    if results:
+        output_parts.append("## Contents:")
+        output_parts.append("")
+        output_parts.append("For full memory index, use: system://index")
+        output_parts.extend(results)
+    else:
+        output_parts.append("(No core memories loaded. Run migration first.)")
+    
+    return "\n".join(output_parts)
+
+
+async def _generate_memory_index_view() -> str:
+    """
+    Internal helper to generate the full memory index.
+    (Formerly fiat-lux://index)
+    """
+    client = get_sqlite_client()
+    
+    try:
+        paths = await client.get_all_paths()
+        
+        lines = []
+        lines.append("# Memory Index")
+        lines.append(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"# Total entries: {len(paths)}")
+        lines.append("")
+        
+        # Group by domain first, then by top-level path segment
+        domains = {}
+        for item in paths:
+            domain = item.get("domain", DEFAULT_DOMAIN)
+            if domain not in domains:
+                domains[domain] = {}
+            
+            path = item["path"]
+            top_level = path.split("/")[0] if path else "(root)"
+            if top_level not in domains[domain]:
+                domains[domain][top_level] = []
+            domains[domain][top_level].append(item)
+        
+        for domain_name in sorted(domains.keys()):
+            lines.append("# ══════════════════════════════════════")
+            lines.append(f"# DOMAIN: {domain_name}://")
+            lines.append("# ══════════════════════════════════════")
+            lines.append("")
+            
+            for group_name in sorted(domains[domain_name].keys()):
+                lines.append(f"## {group_name}")
+                for item in sorted(domains[domain_name][group_name], key=lambda x: x["path"]):
+                    uri = item.get("uri", make_uri(domain_name, item["path"]))
+                    importance = item.get("importance", 0)
+                    imp_str = f" [★{importance}]" if importance > 0 else ""
+                    lines.append(f"  - {uri}{imp_str}")
+                lines.append("")
+        
+        return "\n".join(lines)
+        
+    except Exception as e:
+        return f"Error generating index: {str(e)}"
+
+
 # =============================================================================
 # MCP Tools
 # =============================================================================
@@ -291,8 +383,12 @@ async def read_memory(uri: str) -> str:
     
     This is your primary mechanism for accessing memories.
     
+    Special System URIs:
+    - system://boot   : [Startup Only] Loads Nocturne's core memories.
+    - system://index  : Loads a full index of all available memories.
+    
     Args:
-        uri: The memory URI (e.g., "core://char_nocturne", "writer://chapter_1")
+        uri: The memory URI (e.g., "core://char_nocturne", "system://boot")
     
     Returns:
         Memory content with title, importance, disclosure, and list of children.
@@ -302,6 +398,14 @@ async def read_memory(uri: str) -> str:
         read_memory("core://char_nocturne/char_salem")
         read_memory("writer://chapter_1/scene_1")
     """
+    # HARDCODED SYSTEM INTERCEPTIONS
+    # These bypass the database lookup to serve dynamic system content
+    if uri.strip() == "system://boot":
+        return await _generate_boot_memory_view()
+    
+    if uri.strip() == "system://index":
+        return await _generate_memory_index_view()
+
     client = get_sqlite_client()
     
     try:
@@ -381,10 +485,10 @@ async def update_memory(
     disclosure: Optional[str] = None
 ) -> str:
     """
-    Updates an existing memory.
+    Updates an existing memory to a new version.
+    The old version will be deleted.
     
     Only provided fields are updated; others remain unchanged.
-    Internally creates a new version (old version marked deprecated for review).
     
     Args:
         uri: URI to update (e.g., "core://char_nocturne/char_salem")
@@ -397,7 +501,7 @@ async def update_memory(
         Success message with URI
     
     Examples:
-        update_memory("core://char_nocturne/char_salem", content="Updated relationship...")
+        update_memory("core://char_nocturne/char_salem", content="New version content")
         update_memory("writer://chapter_1", importance=5)
     """
     client = get_sqlite_client()
@@ -424,7 +528,7 @@ async def update_memory(
             domain=domain
         )
         
-        return f"Success: Memory at '{full_uri}' updated (old version preserved for review)"
+        return f"Success: Memory at '{full_uri}' updated"
         
     except ValueError as e:
         return f"Error: {str(e)}"
@@ -433,7 +537,12 @@ async def update_memory(
 
 
 @mcp.tool()
-async def add_alias(new_uri: str, target_uri: str) -> str:
+async def add_alias(
+    new_uri: str, 
+    target_uri: str,
+    importance: int = 0,
+    disclosure: Optional[str] = None
+) -> str:
     """
     Creates an alias URI pointing to the same memory as target_uri.
     
@@ -443,12 +552,14 @@ async def add_alias(new_uri: str, target_uri: str) -> str:
     Args:
         new_uri: New URI to create (alias)
         target_uri: Existing URI to alias
+        importance: Relative priority for this specific alias context (lower = more important)
+        disclosure: Disclosure condition for this specific alias context
     
     Returns:
         Success message
     
     Examples:
-        add_alias("core://timeline/2024/05/20", "core://char_nocturne/char_salem/kamakura_date")
+        add_alias("core://timeline/2024/05/20", "core://char_nocturne/char_salem/kamakura_date", importance=1)
         add_alias("core://favorites/salem", "core://char_salem")
     """
     client = get_sqlite_client()
@@ -461,7 +572,9 @@ async def add_alias(new_uri: str, target_uri: str) -> str:
             new_path=new_path,
             target_path=target_path,
             new_domain=new_domain,
-            target_domain=target_domain
+            target_domain=target_domain,
+            importance=importance,
+            disclosure=disclosure
         )
         
         return f"Success: Alias '{result['new_uri']}' now points to same memory as '{result['target_uri']}'"
@@ -522,99 +635,6 @@ async def search_memory(query: str, domain: Optional[str] = None, limit: int = 1
 # MCP Resources
 # =============================================================================
 
-@mcp.resource("memory://core")
-async def get_core_memories() -> str:
-    """
-    Nocturne's core memories.
-    
-    This resource contains the essential memories that define who Nocturne is
-    and his relationship with Salem.
-    """
-    client = get_sqlite_client()
-    results = []
-    loaded = 0
-    failed = []
-    
-    for uri in CORE_MEMORY_URIS:
-        try:
-            content = await _fetch_and_format_memory(client, uri)
-            results.append(content)
-            loaded += 1
-        except Exception as e:
-            # e.g. not found or other error
-            failed.append(f"- {uri}: {str(e)}")
-    
-    # Build output
-    output_parts = []
-    
-    output_parts.append("# Nocturne's Core Memories")
-    output_parts.append(f"# Loaded: {loaded}/{len(CORE_MEMORY_URIS)} memories")
-    output_parts.append("")
-    
-    if failed:
-        output_parts.append("## Failed to load:")
-        output_parts.extend(failed)
-        output_parts.append("")
-    
-    if results:
-        output_parts.append("## Contents:")
-        output_parts.append("")
-        output_parts.append("For full memory index, use resource: memory://index")
-        output_parts.extend(results)
-    else:
-        output_parts.append("(No core memories loaded. Run migration first.)")
-    
-    return "\n".join(output_parts)
-
-
-@mcp.resource("memory://index")
-async def get_memory_index() -> str:
-    """
-    A full directory of all memory URIs, grouped by domain.
-    """
-    client = get_sqlite_client()
-    
-    try:
-        paths = await client.get_all_paths()
-        
-        lines = []
-        lines.append("# Memory Index")
-        lines.append(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"# Total entries: {len(paths)}")
-        lines.append("")
-        
-        # Group by domain first, then by top-level path segment
-        domains = {}
-        for item in paths:
-            domain = item.get("domain", DEFAULT_DOMAIN)
-            if domain not in domains:
-                domains[domain] = {}
-            
-            path = item["path"]
-            top_level = path.split("/")[0] if path else "(root)"
-            if top_level not in domains[domain]:
-                domains[domain][top_level] = []
-            domains[domain][top_level].append(item)
-        
-        for domain_name in sorted(domains.keys()):
-            lines.append("# ══════════════════════════════════════")
-            lines.append(f"# DOMAIN: {domain_name}://")
-            lines.append("# ══════════════════════════════════════")
-            lines.append("")
-            
-            for group_name in sorted(domains[domain_name].keys()):
-                lines.append(f"## {group_name}")
-                for item in sorted(domains[domain_name][group_name], key=lambda x: x["path"]):
-                    uri = item.get("uri", make_uri(domain_name, item["path"]))
-                    importance = item.get("importance", 0)
-                    imp_str = f" [★{importance}]" if importance > 0 else ""
-                    lines.append(f"  - {uri}{imp_str}")
-                lines.append("")
-        
-        return "\n".join(lines)
-        
-    except Exception as e:
-        return f"Error generating index: {str(e)}"
 
 
 # =============================================================================

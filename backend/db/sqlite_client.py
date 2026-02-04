@@ -39,8 +39,6 @@ class Memory(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(255), nullable=True)  # Optional title/name
     content = Column(Text, nullable=False)
-    importance = Column(Integer, default=0)  # Relative importance for ranking
-    disclosure = Column(Text, nullable=True)  # When to expand this memory
     deprecated = Column(Boolean, default=False)  # Marked for review/deletion
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -59,6 +57,10 @@ class Path(Base):
     path = Column(String(512), primary_key=True)
     memory_id = Column(Integer, ForeignKey("memories.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Context metadata (moved from Memory to Path)
+    importance = Column(Integer, default=0)  # Relative importance for ranking
+    disclosure = Column(Text, nullable=True)  # When to expand this memory
     
     # Relationship to memory
     memory = relationship("Memory", back_populates="paths")
@@ -148,8 +150,8 @@ class SQLiteClient:
                 "id": memory.id,
                 "title": memory.title,
                 "content": memory.content,
-                "importance": memory.importance,
-                "disclosure": memory.disclosure,
+                "importance": path_obj.importance,  # From Path
+                "disclosure": path_obj.disclosure,  # From Path
                 "deprecated": memory.deprecated,
                 "created_at": memory.created_at.isoformat() if memory.created_at else None,
                 "domain": path_obj.domain,
@@ -186,8 +188,7 @@ class SQLiteClient:
                 "id": memory.id,
                 "title": memory.title,
                 "content": memory.content,
-                "importance": memory.importance,
-                "disclosure": memory.disclosure,
+                # Importance/Disclosure removed as they are path-dependent
                 "deprecated": memory.deprecated,
                 "created_at": memory.created_at.isoformat() if memory.created_at else None,
                 "paths": paths
@@ -223,14 +224,10 @@ class SQLiteClient:
                 safe_prefix = f"{safe_parent}/"
                 
                 query = query.where(Path.path.like(f"{safe_prefix}%", escape="\\"))
-                # Filter out grandchildren (anything with another slash after prefix)
-                # SQLite doesn't strictly support standard REGEXP without extensions,
-                # but we can filter efficiently in Python or use NOT LIKE if structure allows.
-                # For "foo/bar" (ok) vs "foo/bar/baz" (no):
-                # We want paths that match "prefix%" AND do NOT match "prefix%/%"
                 query = query.where(Path.path.not_like(f"{safe_prefix}%/%", escape="\\"))
 
-            query = query.order_by(Memory.importance.asc(), Path.path)
+            # Order by Path.importance
+            query = query.order_by(Path.importance.asc(), Path.path)
             
             result = await session.execute(query)
             
@@ -241,8 +238,8 @@ class SQLiteClient:
                     "path": path_obj.path,
                     "title": memory.title,
                     "content_snippet": memory.content[:100] + "..." if len(memory.content) > 100 else memory.content,
-                    "importance": memory.importance,
-                    "disclosure": memory.disclosure
+                    "importance": path_obj.importance,  # From Path
+                    "disclosure": path_obj.disclosure   # From Path
                 })
             
             return children
@@ -278,7 +275,7 @@ class SQLiteClient:
                     "path": path_obj.path,
                     "uri": f"{path_obj.domain}://{path_obj.path}",
                     "title": memory.title,
-                    "importance": memory.importance,
+                    "importance": path_obj.importance,  # From Path
                     "memory_id": memory.id
                 })
             
@@ -341,18 +338,22 @@ class SQLiteClient:
             if existing.scalar_one_or_none():
                 raise ValueError(f"Path '{domain}://{final_path}' already exists")
             
-            # Create memory
+            # Create memory (content only)
             memory = Memory(
                 title=final_title,
-                content=content,
-                importance=importance,
-                disclosure=disclosure
+                content=content
             )
             session.add(memory)
             await session.flush()  # Get the ID
             
-            # Create path
-            path_obj = Path(domain=domain, path=final_path, memory_id=memory.id)
+            # Create path (with metadata)
+            path_obj = Path(
+                domain=domain, 
+                path=final_path, 
+                memory_id=memory.id,
+                importance=importance,
+                disclosure=disclosure
+            )
             session.add(path_obj)
             
             return {
@@ -423,7 +424,7 @@ class SQLiteClient:
             Updated memory info including old and new memory IDs
         """
         async with self.session() as session:
-            # 1. Get current memory
+            # 1. Get current memory and path
             result = await session.execute(
                 select(Memory, Path)
                 .join(Path, Memory.id == Path.memory_id)
@@ -439,33 +440,54 @@ class SQLiteClient:
             old_memory, path_obj = row
             old_id = old_memory.id
             
-            # 2. Create new memory with merged values
-            new_memory = Memory(
-                title=title if title is not None else old_memory.title,
-                content=content if content is not None else old_memory.content,
-                importance=importance if importance is not None else old_memory.importance,
-                disclosure=disclosure if disclosure is not None else old_memory.disclosure
-            )
-            session.add(new_memory)
-            await session.flush()
+            # Determine if we need a new memory version (content/title change)
+            # or just a path metadata update (importance/disclosure change)
             
-            # 3. Mark old as deprecated
-            await session.execute(
-                update(Memory).where(Memory.id == old_id).values(deprecated=True)
-            )
+            content_changed = content is not None and content != old_memory.content
+            title_changed = title is not None and title != old_memory.title
             
-            # 4. Repoint ALL paths pointing to the old memory to the new memory
-            await session.execute(
-                update(Path).where(Path.memory_id == old_id).values(memory_id=new_memory.id)
-            )
+            # Update Path Metadata
+            if importance is not None:
+                path_obj.importance = importance
+            if disclosure is not None:
+                path_obj.disclosure = disclosure
+                
+            new_memory_id = old_id
+            new_title = old_memory.title
+            
+            if content_changed or title_changed:
+                # Content changed: Create new memory version
+                new_title = title if title is not None else old_memory.title
+                
+                new_memory = Memory(
+                    title=new_title,
+                    content=content if content is not None else old_memory.content
+                )
+                session.add(new_memory)
+                await session.flush()
+                new_memory_id = new_memory.id
+                
+                # Mark old as deprecated
+                await session.execute(
+                    update(Memory).where(Memory.id == old_id).values(deprecated=True)
+                )
+                
+                # Repoint ALL paths pointing to the old memory to the new memory
+                # This ensures aliases stay in sync with the content update
+                await session.execute(
+                    update(Path).where(Path.memory_id == old_id).values(memory_id=new_memory.id)
+                )
+            else:
+                # Only metadata changed, just commit the path update
+                session.add(path_obj)
             
             return {
                 "domain": domain,
                 "path": path,
                 "uri": f"{domain}://{path}",
                 "old_memory_id": old_id,
-                "new_memory_id": new_memory.id,
-                "title": new_memory.title
+                "new_memory_id": new_memory_id,
+                "title": new_title
             }
     
     async def rollback_to_memory(self, path: str, target_memory_id: int, domain: str = "core") -> Dict[str, Any]:
@@ -509,7 +531,7 @@ class SQLiteClient:
                 update(Memory).where(Memory.id == target_memory_id).values(deprecated=False)
             )
             
-            # 5. Repoint ALL paths that were pointing to the old memory (handling aliases)
+            # 5. Repoint ALL paths that were pointing to the old memory
             await session.execute(
                 update(Path)
                 .where(Path.memory_id == current_id)
@@ -533,7 +555,9 @@ class SQLiteClient:
         new_path: str,
         target_path: str,
         new_domain: str = "core",
-        target_domain: str = "core"
+        target_domain: str = "core",
+        importance: int = 0,
+        disclosure: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create an alias path pointing to the same memory as target_path.
@@ -543,6 +567,8 @@ class SQLiteClient:
             target_path: Existing path to alias
             new_domain: Domain for the new path
             target_domain: Domain of the target path
+            importance: Importance for this new alias
+            disclosure: Disclosure trigger for this new alias
             
         Returns:
             Created alias info
@@ -569,7 +595,13 @@ class SQLiteClient:
                 raise ValueError(f"Path '{new_domain}://{new_path}' already exists")
             
             # Create alias
-            path_obj = Path(domain=new_domain, path=new_path, memory_id=target_id)
+            path_obj = Path(
+                domain=new_domain, 
+                path=new_path, 
+                memory_id=target_id,
+                importance=importance,
+                disclosure=disclosure
+            )
             session.add(path_obj)
             
             return {
@@ -644,7 +676,8 @@ class SQLiteClient:
             if domain is not None:
                 base_query = base_query.where(Path.domain == domain)
             
-            base_query = base_query.order_by(Memory.importance.asc()).limit(limit)
+            # Order by Path.importance
+            base_query = base_query.order_by(Path.importance.asc()).limit(limit)
             result = await session.execute(base_query)
             
             matches = []
@@ -672,7 +705,7 @@ class SQLiteClient:
                         "uri": f"{path_obj.domain}://{path_obj.path}",
                         "title": memory.title,
                         "snippet": snippet,
-                        "importance": memory.importance
+                        "importance": path_obj.importance  # From Path
                     })
             
             return matches
@@ -711,8 +744,7 @@ class SQLiteClient:
                 "memory_id": memory.id,
                 "title": memory.title,
                 "content": memory.content,
-                "importance": memory.importance,
-                "disclosure": memory.disclosure,
+                # Importance/Disclosure removed
                 "created_at": memory.created_at.isoformat() if memory.created_at else None,
                 "deprecated": memory.deprecated,
                 "paths": paths
@@ -738,7 +770,6 @@ class SQLiteClient:
                     "id": memory.id,
                     "title": memory.title,
                     "content_snippet": memory.content[:200] + "..." if len(memory.content) > 200 else memory.content,
-                    "importance": memory.importance,
                     "created_at": memory.created_at.isoformat() if memory.created_at else None
                 })
             
@@ -771,7 +802,6 @@ class SQLiteClient:
             return {
                 "deleted_memory_id": memory_id
             }
-
 
 # =============================================================================
 # Global Singleton
