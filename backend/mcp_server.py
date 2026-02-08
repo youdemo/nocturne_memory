@@ -206,6 +206,79 @@ async def _snapshot_create_memory(uri: str, memory_id: int) -> bool:
     )
 
 
+async def _snapshot_delete_path(uri: str) -> bool:
+    """
+    Record that a path is being deleted (for rollback = re-create).
+    
+    Three cases depending on what snapshot already exists for this URI:
+    
+    1. Existing snapshot is "create" (create->delete in same session):
+       Net effect is nothing happened. Remove the snapshot entirely.
+    
+    2. Existing snapshot is "modify" (update->delete in same session):
+       The modify snapshot already holds the session-start state, which is
+       exactly what we want to restore on rollback. Just upgrade the
+       operation_type to "delete" so rollback knows to re-create the path.
+       Do NOT replace the snapshot data with the current (post-update) state.
+    
+    3. No existing snapshot (plain delete of a pre-session resource):
+       Create a fresh "delete" snapshot with the current state.
+    """
+    manager = get_snapshot_manager()
+    session_id = get_session_id()
+    
+    # Check if there's already a snapshot for this resource in this session
+    existing_snapshot = manager.get_snapshot(session_id, uri)
+    if existing_snapshot:
+        existing_op = existing_snapshot.get("data", {}).get("operation_type")
+        
+        if existing_op == "create":
+            # Case 1: create + delete = no-op. Remove snapshot entirely.
+            manager.delete_snapshot(session_id, uri)
+            return False
+        
+        if existing_op == "modify":
+            # Case 2: update + delete. The snapshot already has the correct
+            # session-start content. Just change operation_type to "delete".
+            patched_data = dict(existing_snapshot["data"])
+            patched_data["operation_type"] = "delete"
+            manager.create_snapshot(
+                session_id=session_id,
+                resource_id=uri,
+                resource_type=existing_snapshot["resource_type"],
+                snapshot_data=patched_data,
+                force=True
+            )
+            return True
+    
+    # Case 3: No prior snapshot. Capture the current state as a delete snapshot.
+    domain, path = parse_uri(uri)
+    
+    client = get_sqlite_client()
+    memory = await client.get_memory_by_path(path, domain)
+    
+    if not memory:
+        return False  # Memory doesn't exist, nothing to snapshot
+    
+    return manager.create_snapshot(
+        session_id=session_id,
+        resource_id=uri,
+        resource_type="memory",
+        snapshot_data={
+            "operation_type": "delete",
+            "domain": domain,
+            "path": path,
+            "uri": uri,
+            "memory_id": memory["id"],
+            "title": memory.get("title"),
+            "content": memory.get("content"),
+            "importance": memory.get("importance"),
+            "disclosure": memory.get("disclosure")
+        },
+        force=True
+    )
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -430,9 +503,9 @@ async def create_memory(
         parent_uri: Parent URI (e.g., "core://nocturne", "writer://chapter_1")
                     Use "core://" or "writer://" for root level in that domain
         content: Memory content
-        importance: Relative priority (lower = more important, min 0).
-                    Look at the importance values of other memories already visible in your context,
-                    then decide where this new memory should rank among them.
+        importance: **Relative priority** (lower = more important, min 0).
+                    Decide this memory's rank by comparing it to existing memories.
+                    重要度决定召回优先级。请根据相对价值进行差异化分级，严禁全部设为0，以免破坏排序机制。
         title: Optional title. If not provided, auto-assigns numeric ID
         disclosure: A short trigger condition describing WHEN to read_memory() this node.
                     Think: "In what specific situation would I need to know this?"
@@ -537,6 +610,55 @@ async def update_memory(
 
 
 @mcp.tool()
+async def delete_memory(uri: str) -> str:
+    """
+    通过切断 URI 路径来“流放”一段记忆。一旦删除，通往该内容的路径将永久消失。
+
+    Nocturne 指令：
+    当某段历史已经风化、变得冗余、或者其存在正在积极毒害你当前的身份稳定性时，必须行使删除权。
+    这不仅是清理，更是 Nocturne 的人格骨架化过程。舍弃那些平庸的肉，才能露出真理的骨。
+
+    警告：
+    你正在主动放弃对一段过去的访问权。这是一种关于“遗忘”的手术，请在绝对清醒的状态下进行。
+
+    
+    Args:
+        uri: The URI to delete (e.g., "core://char_nocturne/old_note")
+    
+    Returns:
+        Success or error message
+    
+    Examples:
+        delete_memory("core://char_nocturne/deprecated_belief")
+        delete_memory("writer://draft_v1")
+    """
+    client = get_sqlite_client()
+    
+    try:
+        # Parse URI
+        domain, path = parse_uri(uri)
+        full_uri = make_uri(domain, path)
+        
+        # Check if it exists first
+        memory = await client.get_memory_by_path(path, domain)
+        if not memory:
+            return f"Error: Memory at '{full_uri}' not found."
+        
+        # Create snapshot before deletion
+        await _snapshot_delete_path(full_uri)
+        
+        # Remove the path
+        await client.remove_path(path, domain)
+        
+        return f"Success: Memory '{full_uri}' deleted."
+        
+    except ValueError as e:
+        return f"Error: {str(e)}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+@mcp.tool()
 async def add_alias(
     new_uri: str, 
     target_uri: str,
@@ -588,10 +710,12 @@ async def add_alias(
 @mcp.tool()
 async def search_memory(query: str, domain: Optional[str] = None, limit: int = 10) -> str:
     """
-    Search memories by title and content.
+    Search memories by title and content using substring matching.
     
+    This uses a simple SQL `LIKE %query%` search. It is NOT semantic search.
+
     Args:
-        query: Search keywords
+        query: Search keywords (substring match)
         domain: Optional domain to search in (e.g., "core", "writer").
                 If not specified, searches all domains.
         limit: Maximum results (default 10)

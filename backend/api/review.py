@@ -184,6 +184,36 @@ async def get_resource_diff(session_id: str, resource_id: str):
         if current_data["content"] and current_data["content"] != "[DELETED]":
             for line in current_data["content"].splitlines():
                 unified += f"+{line}\n"
+
+    elif operation_type == "delete":
+        # For delete operations: Snapshot has content, Current is [DELETED]
+        snapshot_data = {
+            "content": snapshot["data"].get("content", ""),
+            "title": snapshot["data"].get("title"),
+            "importance": snapshot["data"].get("importance"),
+            "disclosure": snapshot["data"].get("disclosure")
+        }
+        
+        current_memory = await _get_current_memory(snapshot["resource_type"], snapshot["data"])
+        
+        if not current_memory:
+            current_data = {"content": "[DELETED]", "title": None, "importance": None, "disclosure": None}
+        else:
+            # Path might have been re-created manually after deletion
+            current_data = {
+                "content": current_memory.get("content", ""),
+                "title": current_memory.get("title"),
+                "importance": current_memory.get("importance"),
+                "disclosure": current_memory.get("disclosure")
+            }
+        
+        unified, summary = _compute_diff(snapshot_data["content"], current_data["content"])
+        
+        if current_data["content"] == "[DELETED]":
+            summary = "Deleted (rollback = restore)"
+        
+        has_changes = True
+
     else:
         # For modify operations
         snapshot_data = {
@@ -280,6 +310,25 @@ async def _rollback_memory(data: dict, task_description: str) -> dict:
                 status_code=409,
                 detail=f"Cannot delete memory '{uri}': {str(e)}"
             )
+            
+    elif operation_type == "delete":
+        # Rollback of delete = restore the path
+        try:
+            await client.restore_path(
+                path=path,
+                domain=domain,
+                memory_id=data.get("memory_id"),
+                importance=data.get("importance", 0),
+                disclosure=data.get("disclosure")
+            )
+            return {"new_version": data.get("memory_id"), "restored": True}
+        except ValueError as e:
+            # Likely path collision if it was re-created
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot restore path '{uri}': {str(e)}"
+            )
+            
     else:
         # Rollback of modify = restore to snapshot version
         snapshot_memory_id = data.get("memory_id")
@@ -380,6 +429,8 @@ async def rollback_resource(session_id: str, resource_id: str, request: Rollback
                 message = f"Successfully deleted created resource '{resource_id}'."
             else:
                 message = "Resource was already deleted."
+        elif operation_type == "delete":
+             message = f"Successfully restored deleted resource '{resource_id}'."
         else:
             if result.get("no_change"):
                 message = "No changes detected. Content already matches snapshot."

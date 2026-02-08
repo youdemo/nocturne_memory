@@ -168,26 +168,30 @@ class SnapshotManager:
         session_id: str,
         resource_id: str,
         resource_type: str,
-        snapshot_data: Dict[str, Any]
+        snapshot_data: Dict[str, Any],
+        force: bool = False
     ) -> bool:
         """
         Create a snapshot for a resource.
         
         IMPORTANT: This should be called BEFORE any modification.
         If a snapshot already exists for this resource in this session,
-        this call is a no-op (returns False).
+        this call is a no-op (returns False) unless force=True.
         
         Args:
             session_id: Unique session identifier
             resource_id: Resource identifier (e.g., memory URI)
             resource_type: Resource type (e.g., 'memory')
             snapshot_data: The complete resource state to snapshot
+            force: If True, overwrite any existing snapshot for this resource.
+                   Used by delete operations to ensure the final snapshot
+                   reflects the delete rather than an earlier modify.
             
         Returns:
-            True if snapshot was created, False if it already existed
+            True if snapshot was created, False if it already existed (and force=False)
         """
         # Check if snapshot already exists
-        if self.has_snapshot(session_id, resource_id):
+        if not force and self.has_snapshot(session_id, resource_id):
             return False
         
         # Ensure directories exist

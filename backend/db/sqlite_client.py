@@ -639,6 +639,66 @@ class SQLiteClient:
                 "removed_uri": f"{domain}://{path}",
                 "memory_id": memory_id
             }
+
+    async def restore_path(
+        self, 
+        path: str, 
+        domain: str, 
+        memory_id: int, 
+        importance: int = 0, 
+        disclosure: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Restore a path pointing to a specific memory ID (used for rollback).
+        
+        Args:
+            path: Path to restore
+            domain: Domain
+            memory_id: Memory ID to point to
+            importance: Path importance
+            disclosure: Path disclosure
+            
+        Returns:
+            Restored path info
+        """
+        async with self.session() as session:
+            # Check if memory exists
+            memory_result = await session.execute(
+                select(Memory).where(Memory.id == memory_id)
+            )
+            if not memory_result.scalar_one_or_none():
+                raise ValueError(f"Memory ID {memory_id} not found")
+
+            # Ensure memory is not deprecated (un-deprecate if needed)
+            # This is critical for rollback: if we restore a path to a memory that was
+            # deprecated (e.g. by a subsequent update), we must make it visible again.
+            await session.execute(
+                update(Memory).where(Memory.id == memory_id).values(deprecated=False)
+            )
+            
+            # Check if path already exists (collision)
+            existing = await session.execute(
+                select(Path)
+                .where(Path.domain == domain)
+                .where(Path.path == path)
+            )
+            if existing.scalar_one_or_none():
+                raise ValueError(f"Path '{domain}://{path}' already exists")
+            
+            # Create path
+            path_obj = Path(
+                domain=domain,
+                path=path,
+                memory_id=memory_id,
+                importance=importance,
+                disclosure=disclosure
+            )
+            session.add(path_obj)
+            
+            return {
+                "uri": f"{domain}://{path}",
+                "memory_id": memory_id
+            }
     
     # =========================================================================
     # Search Operations
