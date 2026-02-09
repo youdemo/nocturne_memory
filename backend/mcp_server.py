@@ -619,7 +619,9 @@ async def create_memory(
 @mcp.tool()
 async def update_memory(
     uri: str,
-    content: Optional[str] = None,
+    old_string: Optional[str] = None,
+    new_string: Optional[str] = None,
+    append: Optional[str] = None,
     importance: Optional[int] = None,
     disclosure: Optional[str] = None
 ) -> str:
@@ -627,20 +629,36 @@ async def update_memory(
     Updates an existing memory to a new version.
     The old version will be deleted.
     警告：update之前需先read_memory，确保你知道你覆盖了什么。
-    
+
     Only provided fields are updated; others remain unchanged.
-    
+
+    Two content-editing modes (mutually exclusive):
+
+    1. **Patch mode** (primary): Provide old_string + new_string.
+       Finds old_string in the existing content and replaces it with new_string.
+       old_string must match exactly ONE location in the content.
+       To delete a section, set new_string to empty string "".
+
+    2. **Append mode**: Provide append.
+       Adds the given text to the end of existing content.
+
+    There is NO full-replace mode. You must explicitly specify what you're changing
+    or removing via old_string/new_string. This prevents accidental content loss.
+
     Args:
         uri: URI to update (e.g., "core://char_nocturne/char_salem")
-        content: New content (None = keep existing)
+        old_string: [Patch mode] Text to find in existing content (must be unique)
+        new_string: [Patch mode] Text to replace old_string with. Use "" to delete a section.
+        append: [Append mode] Text to append to the end of existing content
         importance: New importance (None = keep existing)
         disclosure: New disclosure instruction (None = keep existing)
-    
+
     Returns:
         Success message with URI
-    
+
     Examples:
-        update_memory("core://char_nocturne/char_salem", content="New version content")
+        update_memory("core://char_nocturne/char_salem", old_string="旧的段落内容", new_string="新的段落内容")
+        update_memory("core://char_nocturne", append="\\n## 新增段落\\n新内容...")
         update_memory("writer://chapter_1", importance=5)
     """
     client = get_sqlite_client()
@@ -650,7 +668,52 @@ async def update_memory(
         domain, path = parse_uri(uri)
         full_uri = make_uri(domain, path)
         
-        # Snapshot both dimensions before modification (each is idempotent)
+        # --- Validate mutually exclusive content-editing modes ---
+        if old_string is not None and append is not None:
+            return "Error: Cannot use both old_string/new_string (patch) and append at the same time. Pick one."
+        
+        if old_string is not None and new_string is None:
+            return "Error: old_string provided without new_string. To delete a section, use new_string=\"\"."
+        
+        if new_string is not None and old_string is None:
+            return "Error: new_string provided without old_string. Both are required for patch mode."
+        
+        # --- Resolve content for patch/append modes ---
+        content = None
+        
+        if old_string is not None:
+            # Patch mode: find and replace within existing content
+            memory = await client.get_memory_by_path(path, domain)
+            if not memory:
+                return f"Error: Memory at '{full_uri}' not found."
+            
+            current_content = memory.get("content", "")
+            count = current_content.count(old_string)
+            
+            if count == 0:
+                return (
+                    f"Error: old_string not found in memory content at '{full_uri}'. "
+                    f"Make sure it matches the existing text exactly."
+                )
+            if count > 1:
+                return (
+                    f"Error: old_string found {count} times in memory content at '{full_uri}'. "
+                    f"Provide more surrounding context to make it unique."
+                )
+            
+            # Perform the replacement
+            content = current_content.replace(old_string, new_string, 1)
+        
+        elif append is not None:
+            # Append mode: add to end of existing content
+            memory = await client.get_memory_by_path(path, domain)
+            if not memory:
+                return f"Error: Memory at '{full_uri}' not found."
+            
+            current_content = memory.get("content", "")
+            content = current_content + append
+        
+        # --- Snapshot before modification (each is idempotent) ---
         if content is not None:
             await _snapshot_memory_content(full_uri)
         if importance is not None or disclosure is not None:
