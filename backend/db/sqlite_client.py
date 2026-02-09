@@ -63,7 +63,7 @@ class Path(Base):
     
     # Composite primary key: (domain, path)
     # domain examples: "core", "writer", "game"
-    # path examples: "char_nocturne", "char_nocturne/char_salem"
+    # path examples: "nocturne", "nocturne/salem"
     domain = Column(String(64), primary_key=True, default="core")
     path = Column(String(512), primary_key=True)
     memory_id = Column(Integer, ForeignKey("memories.id"), nullable=False)
@@ -221,7 +221,7 @@ class SQLiteClient:
         If parent_path is None or empty, returns root elements (paths with no '/').
         
         Args:
-            parent_path: The parent path (e.g. "char_nocturne"). If None/"", gets roots.
+            parent_path: The parent path (e.g. "nocturne"). If None/"", gets roots.
             domain: The domain/namespace
             
         Returns:
@@ -319,7 +319,7 @@ class SQLiteClient:
         Create a new memory under a parent path.
         
         Args:
-            parent_path: Parent path (e.g. "char_nocturne/char_salem")
+            parent_path: Parent path (e.g. "nocturne/salem")
             content: Memory content
             importance: Relative importance (lower = more important, min 0)
             title: Optional path segment name. If None, auto-assigns numeric ID.

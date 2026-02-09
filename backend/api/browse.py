@@ -18,7 +18,7 @@ class NodeUpdate(BaseModel):
 
 @router.get("/node")
 async def get_node(
-    path: str = Query("", description="URI path like 'char_nocturne' or 'char_nocturne/char_salem'"),
+    path: str = Query("", description="URI path like 'nocturne' or 'nocturne/salem'"),
     domain: str = Query("core")
 ):
     """

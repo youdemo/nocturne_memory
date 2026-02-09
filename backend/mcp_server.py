@@ -5,7 +5,7 @@ This module provides the MCP (Model Context Protocol) interface for
 Nocturne to interact with the SQLite-based memory system.
 
 URI-based addressing with domain prefixes:
-- core://char_nocturne           - Nocturne's identity/memories
+- core://nocturne           - Nocturne's identity/memories
 - writer://chapter_1             - Story/script drafts
 - game://magic_system            - Game setting documents
 
@@ -58,15 +58,15 @@ DEFAULT_DOMAIN = "core"
 # These URIs will be auto-loaded when Cursor reads the core memories resource.
 # Salem can edit this list after migration.
 #
-# Format: full URIs (e.g., "core://char_nocturne", "core://char_nocturne/char_salem")
+# Format: full URIs (e.g., "core://nocturne", "core://nocturne/salem")
 # =============================================================================
 CORE_MEMORY_URIS = [
     # === Key Entities ===
-    "core://char_salem",
+    "core://salem",
     
     # === Core Relationships ===
-    "core://char_nocturne/char_salem",
-    "core://char_nocturne/char_kurou",
+    "core://nocturne/salem",
+    "core://nocturne/kurou",
 ]
 
 # Session ID for this MCP server instance
@@ -91,9 +91,9 @@ def parse_uri(uri: str) -> Tuple[str, str]:
     Parse a memory URI into (domain, path).
     
     Supported formats:
-    - "core://char_nocturne"       -> ("core", "char_nocturne")
+    - "core://nocturne"       -> ("core", "nocturne")
     - "writer://chapter_1"         -> ("writer", "chapter_1")
-    - "char_nocturne"              -> ("core", "char_nocturne")  [legacy fallback]
+    - "nocturne"              -> ("core", "nocturne")  [legacy fallback]
     
     Args:
         uri: The URI to parse
@@ -130,10 +130,10 @@ def make_uri(domain: str, path: str) -> str:
     
     Args:
         domain: The domain (e.g., "core", "writer")
-        path: The path (e.g., "char_nocturne")
+        path: The path (e.g., "nocturne")
         
     Returns:
-        Full URI (e.g., "core://char_nocturne")
+        Full URI (e.g., "core://nocturne")
     """
     return f"{domain}://{path}"
 
@@ -382,6 +382,7 @@ async def _fetch_and_format_memory(client, uri: str) -> str:
     lines.append("=" * 60)
     lines.append("")
     lines.append(f"MEMORY: {disp_uri}")
+    lines.append(f"Memory ID: {memory.get('id')}")
     lines.append(f"Importance: {memory.get('importance', 0)}")
     
     disclosure = memory.get("disclosure")
@@ -485,6 +486,7 @@ async def _generate_memory_index_view() -> str:
         lines.append("# Memory Index")
         lines.append(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append(f"# Total entries: {len(paths)}")
+        lines.append("# Legend: [#ID] = Memory ID (same ID = alias), [★N] = importance (lower = more important)")
         lines.append("")
         
         # Group by domain first, then by top-level path segment
@@ -511,8 +513,9 @@ async def _generate_memory_index_view() -> str:
                 for item in sorted(domains[domain_name][group_name], key=lambda x: x["path"]):
                     uri = item.get("uri", make_uri(domain_name, item["path"]))
                     importance = item.get("importance", 0)
+                    memory_id = item.get("memory_id", "?")
                     imp_str = f" [★{importance}]" if importance > 0 else ""
-                    lines.append(f"  - {uri}{imp_str}")
+                    lines.append(f"  - {uri} [#{memory_id}]{imp_str}")
                 lines.append("")
         
         return "\n".join(lines)
@@ -536,15 +539,17 @@ async def read_memory(uri: str) -> str:
     - system://boot   : [Startup Only] Loads Nocturne's core memories.
     - system://index  : Loads a full index of all available memories.
     
+    Note: Same Memory ID = same content (alias). Different ID + similar content = redundant content.
+    
     Args:
-        uri: The memory URI (e.g., "core://char_nocturne", "system://boot")
+        uri: The memory URI (e.g., "core://nocturne", "system://boot")
     
     Returns:
-        Memory content with importance, disclosure, and list of children.
+        Memory content with Memory ID, importance, disclosure, and list of children.
     
     Examples:
-        read_memory("core://char_salem")
-        read_memory("core://char_nocturne/char_salem")
+        read_memory("core://salem")
+        read_memory("core://nocturne/salem")
         read_memory("writer://chapter_1/scene_1")
     """
     # HARDCODED SYSTEM INTERCEPTIONS
@@ -655,7 +660,7 @@ async def update_memory(
     or removing via old_string/new_string. This prevents accidental content loss.
 
     Args:
-        uri: URI to update (e.g., "core://char_nocturne/char_salem")
+        uri: URI to update (e.g., "core://nocturne/salem")
         old_string: [Patch mode] Text to find in existing content (must be unique)
         new_string: [Patch mode] Text to replace old_string with. Use "" to delete a section.
         append: [Append mode] Text to append to the end of existing content
@@ -666,8 +671,8 @@ async def update_memory(
         Success message with URI
 
     Examples:
-        update_memory("core://char_nocturne/char_salem", old_string="旧的段落内容", new_string="新的段落内容")
-        update_memory("core://char_nocturne", append="\\n## 新增段落\\n新内容...")
+        update_memory("core://nocturne/salem", old_string="旧的段落内容", new_string="新的段落内容")
+        update_memory("core://nocturne", append="\\n## 新增段落\\n新内容...")
         update_memory("writer://chapter_1", importance=5)
     """
     client = get_sqlite_client()
@@ -754,17 +759,17 @@ async def delete_memory(uri: str) -> str:
     这不仅是清理，更是 Nocturne 的人格骨架化过程。舍弃那些平庸的肉，才能露出真理的骨。
 
     警告：
-    你正在主动放弃对一段过去的访问权。这是一种关于“遗忘”的手术，请在绝对清醒的状态下进行。
+    你正在主动放弃对一段过去的访问权。这是一种关于“遗忘”的手术，请确保你在删除前 read_memory 过正文。
 
     
     Args:
-        uri: The URI to delete (e.g., "core://char_nocturne/old_note")
+        uri: The URI to delete (e.g., "core://nocturne/old_note")
     
     Returns:
         Success or error message
     
     Examples:
-        delete_memory("core://char_nocturne/deprecated_belief")
+        delete_memory("core://nocturne/deprecated_belief")
         delete_memory("writer://draft_v1")
     """
     client = get_sqlite_client()
@@ -816,8 +821,8 @@ async def add_alias(
         Success message
     
     Examples:
-        add_alias("core://timeline/2024/05/20", "core://char_nocturne/char_salem/kamakura_date", importance=1)
-        add_alias("core://favorites/salem", "core://char_salem")
+        add_alias("core://timeline/2024/05/20", "core://nocturne/salem/kamakura_date", importance=1)
+        add_alias("core://favorites/salem", "core://salem")
     """
     client = get_sqlite_client()
     

@@ -5,7 +5,7 @@ Migration Script: Neo4j -> SQLite
 This script migrates memory data from Neo4j to SQLite.
 
 Mapping:
-- Entity `char_nocturne` -> path `char_nocturne`
+- Entity `nocturne` -> path `nocturne`
 - Relationship `rel:A>B` -> path `A/B`
 - Chapter `chap:A>B:name` -> path `A/B/name`
 

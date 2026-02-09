@@ -69,7 +69,7 @@ async def get_snapshot_detail(session_id: str, resource_id: str):
     获取指定快照的详细数据
     
     resource_id 示例:
-    - Memory path: "char_nocturne", "char_nocturne/char_salem"
+    - Memory path: "nocturne", "nocturne/salem"
     """
     # Ensure resource_id is decoded (handling %2F and other encoded chars)
     resource_id = unquote(resource_id)
