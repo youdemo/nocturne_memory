@@ -774,6 +774,12 @@ async def update_memory(
         
         if old_string is not None:
             # Patch mode: find and replace within existing content
+            if old_string == new_string:
+                return (
+                    "Error: old_string and new_string are identical. "
+                    "No change would be made."
+                )
+            
             memory = await client.get_memory_by_path(path, domain)
             if not memory:
                 return f"Error: Memory at '{full_uri}' not found."
@@ -794,8 +800,24 @@ async def update_memory(
             
             # Perform the replacement
             content = current_content.replace(old_string, new_string, 1)
+            
+            # Safety check: ensure the replacement actually changed something.
+            # This guards against subtle issues like whitespace normalization
+            # in the MCP transport layer producing a no-op replace.
+            if content == current_content:
+                return (
+                    f"Error: Replacement produced identical content at '{full_uri}'. "
+                    f"The old_string was found but replacing it with new_string "
+                    f"resulted in no change. Check for subtle whitespace differences."
+                )
         
         elif append is not None:
+            # Reject empty append to avoid creating a no-op version
+            if not append:
+                return (
+                    f"Error: Empty append for '{full_uri}'. "
+                    f"Provide non-empty text to append."
+                )
             # Append mode: add to end of existing content
             memory = await client.get_memory_by_path(path, domain)
             if not memory:
@@ -803,6 +825,16 @@ async def update_memory(
             
             current_content = memory.get("content", "")
             content = current_content + append
+        
+        # Reject no-op requests where no valid update fields were provided.
+        # This catches malformed tool calls (e.g. oldString/newString instead
+        # of old_string/new_string) that previously returned a false "Success".
+        if content is None and importance is None and disclosure is None:
+            return (
+                f"Error: No update fields provided for '{full_uri}'. "
+                f"Use patch mode (old_string + new_string), append mode (append), "
+                f"or metadata fields (importance/disclosure)."
+            )
         
         # --- Snapshot before modification (each is idempotent) ---
         if content is not None:

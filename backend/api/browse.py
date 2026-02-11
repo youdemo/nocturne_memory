@@ -124,12 +124,15 @@ async def update_node(
         raise HTTPException(status_code=404, detail=f"Path not found: {domain}://{path}")
     
     # Update (creates new version if content changed, updates path metadata otherwise)
-    result = await client.update_memory(
-        path=path,
-        domain=domain,
-        content=body.content,
-        importance=body.importance,
-        disclosure=body.disclosure,
-    )
+    try:
+        result = await client.update_memory(
+            path=path,
+            domain=domain,
+            content=body.content,
+            importance=body.importance,
+            disclosure=body.disclosure,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     
     return {"success": True, "memory_id": result["new_memory_id"]}

@@ -439,6 +439,12 @@ class SQLiteClient:
         Returns:
             Updated memory info including old and new memory IDs
         """
+        if content is None and importance is None and disclosure is None:
+            raise ValueError(
+                f"No update fields provided for '{domain}://{path}'. "
+                "At least one of content, importance, or disclosure must be set."
+            )
+
         async with self.session() as session:
             # 1. Get current memory and path
             result = await session.execute(
@@ -456,11 +462,6 @@ class SQLiteClient:
             old_memory, path_obj = row
             old_id = old_memory.id
             
-            # Determine if we need a new memory version (content change)
-            # or just a path metadata update (importance/disclosure change)
-            
-            content_changed = content is not None and content != old_memory.content
-            
             # Update Path Metadata
             if importance is not None:
                 path_obj.importance = importance
@@ -469,8 +470,20 @@ class SQLiteClient:
                 
             new_memory_id = old_id
             
-            if content_changed:
-                # Content changed: Create new memory version
+            if content is not None:
+                # Content update requested: ALWAYS create a new version.
+                #
+                # Previously this checked `content != old_memory.content` and
+                # silently skipped when content was identical.  This caused a
+                # TOCTOU bug: the MCP layer reads content in session A, computes
+                # the replacement, then passes it here (session B).  If the DB
+                # content was already updated between the two reads (or if the
+                # MCP transport subtly normalised whitespace), the equality
+                # check would pass, no new version was created, yet "Success"
+                # was returned to the caller.
+                #
+                # The MCP layer is responsible for validating the change; the
+                # DB layer should unconditionally persist whatever it receives.
                 new_memory = Memory(
                     content=content
                 )
@@ -491,8 +504,9 @@ class SQLiteClient:
                 await session.execute(
                     update(Path).where(Path.memory_id == old_id).values(memory_id=new_memory.id)
                 )
-            else:
-                # Only metadata changed, just commit the path update
+            
+            if content is None:
+                # Only metadata changed, explicitly add the path object for flush
                 session.add(path_obj)
             
             return {
