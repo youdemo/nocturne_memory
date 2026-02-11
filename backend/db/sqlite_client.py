@@ -931,8 +931,168 @@ class SQLiteClient:
                 })
             
             return memories
+
+    async def _resolve_migration_chain(
+        self, session: AsyncSession, start_id: int, max_hops: int = 50
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Follow the migrated_to chain from start_id to the final target.
+        
+        The final target is the memory at the end of the chain (migrated_to=NULL).
+        Returns None if the chain is broken (missing memory) or too long (cycle).
+        """
+        current_id = start_id
+        for _ in range(max_hops):
+            result = await session.execute(
+                select(Memory).where(Memory.id == current_id)
+            )
+            memory = result.scalar_one_or_none()
+            if not memory:
+                return None  # Broken chain
+            if memory.migrated_to is None:
+                # Final target reached
+                paths_result = await session.execute(
+                    select(Path).where(Path.memory_id == memory.id)
+                )
+                paths = [f"{p.domain}://{p.path}" for p in paths_result.scalars().all()]
+                return {
+                    "id": memory.id,
+                    "content": memory.content,
+                    "content_snippet": (
+                        memory.content[:200] + "..."
+                        if len(memory.content) > 200
+                        else memory.content
+                    ),
+                    "created_at": memory.created_at.isoformat() if memory.created_at else None,
+                    "deprecated": memory.deprecated,
+                    "paths": paths
+                }
+            current_id = memory.migrated_to
+        return None  # Chain too long, likely a cycle
+
+    async def get_all_orphan_memories(self) -> List[Dict[str, Any]]:
+        """
+        Get all orphan memories in the system.
+        
+        Two categories:
+        - "deprecated": deprecated=True, created by update_memory. Has migrated_to.
+        - "orphaned": deprecated=False but no paths point to it. Created by path deletion.
+        
+        For deprecated memories with migrated_to, resolves the migration chain to
+        find the final target and its current paths.
+        """
+        async with self.session() as session:
+            orphans = []
+
+            # 1. Deprecated memories (from update_memory)
+            deprecated_result = await session.execute(
+                select(Memory)
+                .where(Memory.deprecated == True)
+                .order_by(Memory.created_at.desc())
+            )
+
+            for memory in deprecated_result.scalars().all():
+                item = {
+                    "id": memory.id,
+                    "content_snippet": (
+                        memory.content[:200] + "..."
+                        if len(memory.content) > 200
+                        else memory.content
+                    ),
+                    "created_at": memory.created_at.isoformat() if memory.created_at else None,
+                    "deprecated": True,
+                    "migrated_to": memory.migrated_to,
+                    "category": "deprecated",
+                    "migration_target": None
+                }
+
+                if memory.migrated_to:
+                    target = await self._resolve_migration_chain(session, memory.migrated_to)
+                    if target:
+                        item["migration_target"] = {
+                            "id": target["id"],
+                            "paths": target["paths"],
+                            "content_snippet": target["content_snippet"]
+                        }
+
+                orphans.append(item)
+
+            # 2. Truly orphaned memories (non-deprecated, no paths)
+            orphaned_result = await session.execute(
+                select(Memory)
+                .outerjoin(Path, Memory.id == Path.memory_id)
+                .where(Memory.deprecated == False)
+                .where(Path.memory_id.is_(None))
+                .order_by(Memory.created_at.desc())
+            )
+
+            for memory in orphaned_result.scalars().all():
+                orphans.append({
+                    "id": memory.id,
+                    "content_snippet": (
+                        memory.content[:200] + "..."
+                        if len(memory.content) > 200
+                        else memory.content
+                    ),
+                    "created_at": memory.created_at.isoformat() if memory.created_at else None,
+                    "deprecated": False,
+                    "migrated_to": memory.migrated_to,
+                    "category": "orphaned",
+                    "migration_target": None
+                })
+
+            return orphans
+
+    async def get_orphan_detail(self, memory_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get full detail of an orphan memory for content viewing and diff comparison.
+        
+        Returns full content of both the orphan and its final migration target
+        (if applicable).
+        """
+        async with self.session() as session:
+            result = await session.execute(
+                select(Memory).where(Memory.id == memory_id)
+            )
+            memory = result.scalar_one_or_none()
+            if not memory:
+                return None
+
+            # Determine category
+            if memory.deprecated:
+                category = "deprecated"
+            else:
+                paths_count_result = await session.execute(
+                    select(func.count()).select_from(Path).where(Path.memory_id == memory_id)
+                )
+                category = "orphaned" if paths_count_result.scalar() == 0 else "active"
+
+            detail = {
+                "id": memory.id,
+                "content": memory.content,
+                "created_at": memory.created_at.isoformat() if memory.created_at else None,
+                "deprecated": memory.deprecated,
+                "migrated_to": memory.migrated_to,
+                "category": category,
+                "migration_target": None
+            }
+
+            # Resolve migration chain for diff comparison
+            if memory.migrated_to:
+                target = await self._resolve_migration_chain(session, memory.migrated_to)
+                if target:
+                    detail["migration_target"] = {
+                        "id": target["id"],
+                        "content": target["content"],
+                        "paths": target["paths"],
+                        "created_at": target["created_at"]
+                    }
+
+            return detail
     
-    async def permanently_delete_memory(self, memory_id: int) -> Dict[str, Any]:
+    async def permanently_delete_memory(
+        self, memory_id: int, *, require_orphan: bool = False
+    ) -> Dict[str, Any]:
         """
         Permanently delete a memory (Salem only).
         
@@ -945,22 +1105,44 @@ class SQLiteClient:
         
         Args:
             memory_id: Memory ID to delete
+            require_orphan: If True, verify the memory is still an orphan
+                (deprecated or path-less) within the same transaction.
+                Raises PermissionError if the memory has active paths.
             
         Returns:
             Deletion info
+            
+        Raises:
+            ValueError: Memory ID not found
+            PermissionError: Memory has active paths (only when require_orphan=True)
         """
         async with self.session() as session:
-            # 1. Get the memory being deleted to find its successor
+            # 1. Get the memory being deleted
             target_result = await session.execute(
-                select(Memory.migrated_to).where(Memory.id == memory_id)
+                select(Memory.deprecated, Memory.migrated_to)
+                .where(Memory.id == memory_id)
             )
             target_row = target_result.first()
             if not target_row:
                 raise ValueError(f"Memory ID {memory_id} not found")
             
-            successor_id = target_row[0]  # The deleted node's migrated_to (may be None)
+            deprecated, successor_id = target_row
             
-            # 2. Repair the chain: any memory pointing to the deleted node
+            # 2. If caller requires orphan safety, verify within this transaction
+            if require_orphan and not deprecated:
+                path_count_result = await session.execute(
+                    select(func.count())
+                    .select_from(Path)
+                    .where(Path.memory_id == memory_id)
+                )
+                path_count = path_count_result.scalar()
+                if path_count > 0:
+                    raise PermissionError(
+                        f"Memory {memory_id} is no longer an orphan "
+                        f"(has {path_count} active path(s)). Deletion aborted."
+                    )
+            
+            # 3. Repair the chain: any memory pointing to the deleted node
             #    should now point to the deleted node's successor
             await session.execute(
                 update(Memory)
@@ -968,12 +1150,12 @@ class SQLiteClient:
                 .values(migrated_to=successor_id)
             )
             
-            # 3. Remove any paths pointing to this memory
+            # 4. Remove any paths pointing to this memory
             await session.execute(
                 delete(Path).where(Path.memory_id == memory_id)
             )
             
-            # 4. Delete the memory
+            # 5. Delete the memory
             result = await session.execute(
                 delete(Memory).where(Memory.id == memory_id)
             )

@@ -1,709 +1,410 @@
-import React, { useState, useCallback } from 'react';
-import { Trash2, Search, AlertCircle, CheckCircle2, Loader2, HardDrive, Layers, Sparkles, Ghost } from 'lucide-react';
-import clsx from 'clsx';
-import { getOrphanStates, deleteStatesBatch, getOrphanEntities, deleteEntitiesBatch } from '../../lib/api';
+import React, { useEffect, useState, useCallback } from 'react';
+import axios from 'axios';
+import {
+  Trash2, Sparkles, AlertTriangle, RefreshCw,
+  ChevronDown, ChevronUp, ArrowRight, Unlink, Archive, CheckSquare, Square, Minus
+} from 'lucide-react';
+import { format } from 'date-fns';
+import DiffViewer from '../../components/DiffViewer';
 
-function MaintenancePage() {
-  // Tab: 'states' or 'entities'
-  const [activeTab, setActiveTab] = useState('states');
-  
-  // State cleanup state
-  const [stateMode, setStateMode] = useState('in_zero');
-  const [stateLimit, setStateLimit] = useState(100);
-  const [stateLoading, setStateLoading] = useState(false);
-  const [stateDeleting, setStateDeleting] = useState(false);
-  const [stateError, setStateError] = useState(null);
-  const [orphanStates, setOrphanStates] = useState(null);
-  const [selectedStateIds, setSelectedStateIds] = useState(new Set());
-  const [stateDeleteResult, setStateDeleteResult] = useState(null);
+const api = axios.create({ baseURL: '/api' });
 
-  // Entity cleanup state
-  const [entityLimit, setEntityLimit] = useState(100);
-  const [entityLoading, setEntityLoading] = useState(false);
-  const [entityDeleting, setEntityDeleting] = useState(false);
-  const [entityError, setEntityError] = useState(null);
-  const [orphanEntities, setOrphanEntities] = useState(null);
-  const [selectedEntityIds, setSelectedEntityIds] = useState(new Set());
-  const [entityDeleteResult, setEntityDeleteResult] = useState(null);
+export default function MaintenancePage() {
+  const [orphans, setOrphans] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // ========== State Cleanup Handlers ==========
-  const handleSearchStates = useCallback(async () => {
-    setStateLoading(true);
-    setStateError(null);
-    setStateDeleteResult(null);
-    setSelectedStateIds(new Set());
-    
+  // Expand / detail
+  const [expandedId, setExpandedId] = useState(null);
+  const [detailData, setDetailData] = useState({});
+  const [detailLoading, setDetailLoading] = useState(null);
+
+  // Multi-select
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+
+  useEffect(() => {
+    loadOrphans();
+  }, []);
+
+  const loadOrphans = async () => {
+    setLoading(true);
+    setError(null);
+    setSelectedIds(new Set());
     try {
-      const data = await getOrphanStates(stateMode, stateLimit);
-      setOrphanStates(data);
+      const res = await api.get('/maintenance/orphans');
+      setOrphans(res.data);
     } catch (err) {
-      setStateError(err.response?.data?.detail || err.message || 'Failed to fetch orphan states');
-      setOrphanStates(null);
+      setError("Failed to load orphans: " + (err.response?.data?.detail || err.message));
     } finally {
-      setStateLoading(false);
+      setLoading(false);
     }
-  }, [stateMode, stateLimit]);
+  };
 
-  const toggleStateSelection = (stateId) => {
-    setSelectedStateIds(prev => {
+  // Toggle single checkbox
+  const toggleSelect = useCallback((id, e) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
       const next = new Set(prev);
-      if (next.has(stateId)) {
-        next.delete(stateId);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Select/deselect all in a category
+  const toggleSelectAll = useCallback((items) => {
+    const ids = items.map(i => i.id);
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = ids.every(id => next.has(id));
+      if (allSelected) {
+        ids.forEach(id => next.delete(id));
       } else {
-        next.add(stateId);
+        ids.forEach(id => next.add(id));
       }
       return next;
     });
-  };
+  }, []);
 
-  const selectAllStates = () => {
-    if (!orphanStates?.states) return;
-    const nonCurrentIds = orphanStates.states
-      .filter(s => !s.is_current)
-      .map(s => s.state_id);
-    setSelectedStateIds(new Set(nonCurrentIds));
-  };
+  // Batch delete
+  const handleBatchDelete = async () => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    if (!confirm(`Permanently delete ${count} memories? This cannot be undone.`)) return;
 
-  const handleDeleteStates = async () => {
-    if (selectedStateIds.size === 0) return;
-    
-    const hasCurrent = orphanStates.states.some(s => selectedStateIds.has(s.state_id) && s.is_current);
-    
-    let message = `Delete ${selectedStateIds.size} state(s)? This cannot be undone.`;
-    if (hasCurrent) {
-      message += `\n\n⚠️ WARNING: You have selected CURRENT version(s).\nDeleting them will revert the entity to its previous version.`;
-    }
-    
-    message += `\n\nSelected IDs:\n${[...selectedStateIds].slice(0, 5).join('\n')}` +
-      (selectedStateIds.size > 5 ? `\n... and ${selectedStateIds.size - 5} more` : '');
+    setBatchDeleting(true);
+    const toDelete = [...selectedIds];
+    let failed = [];
 
-    const confirmed = confirm(message);
-    
-    if (!confirmed) return;
-    
-    setStateDeleting(true);
-    setStateError(null);
-    setStateDeleteResult(null);
-    
-    try {
-      const result = await deleteStatesBatch([...selectedStateIds]);
-      setStateDeleteResult(result);
-      
-      if (result.deleted_count > 0) {
-        const data = await getOrphanStates(stateMode, stateLimit);
-        setOrphanStates(data);
-        setSelectedStateIds(new Set());
+    for (const id of toDelete) {
+      try {
+        await api.delete(`/maintenance/orphans/${id}`);
+      } catch {
+        failed.push(id);
       }
-    } catch (err) {
-      setStateError(err.response?.data?.detail || err.message || 'Failed to delete states');
-    } finally {
-      setStateDeleting(false);
     }
+
+    // Remove successfully deleted from list
+    const failedSet = new Set(failed);
+    setOrphans(prev => prev.filter(item => !toDelete.includes(item.id) || failedSet.has(item.id)));
+    setSelectedIds(new Set(failed));
+
+    if (expandedId && toDelete.includes(expandedId) && !failedSet.has(expandedId)) {
+      setExpandedId(null);
+    }
+
+    if (failed.length > 0) {
+      alert(`${failed.length} of ${count} deletions failed. Failed IDs: ${failed.join(', ')}`);
+    }
+
+    setBatchDeleting(false);
   };
 
-  // ========== Entity Cleanup Handlers ==========
-  const handleSearchEntities = useCallback(async () => {
-    setEntityLoading(true);
-    setEntityError(null);
-    setEntityDeleteResult(null);
-    setSelectedEntityIds(new Set());
-    
-    try {
-      const data = await getOrphanEntities(entityLimit);
-      setOrphanEntities(data);
-    } catch (err) {
-      setEntityError(err.response?.data?.detail || err.message || 'Failed to fetch orphan entities');
-      setOrphanEntities(null);
-    } finally {
-      setEntityLoading(false);
+  // Expand card
+  const handleExpand = async (id) => {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
     }
-  }, [entityLimit]);
+    setExpandedId(id);
 
-  const toggleEntitySelection = (entityId) => {
-    setSelectedEntityIds(prev => {
-      const next = new Set(prev);
-      if (next.has(entityId)) {
-        next.delete(entityId);
-      } else {
-        next.add(entityId);
+    if (!detailData[id]) {
+      setDetailLoading(id);
+      try {
+        const res = await api.get(`/maintenance/orphans/${id}`);
+        setDetailData(prev => ({ ...prev, [id]: res.data }));
+      } catch (err) {
+        setDetailData(prev => ({ ...prev, [id]: { error: err.response?.data?.detail || err.message } }));
+      } finally {
+        setDetailLoading(null);
       }
-      return next;
-    });
-  };
-
-  const selectAllEntities = () => {
-    if (!orphanEntities?.entities) return;
-    setSelectedEntityIds(new Set(orphanEntities.entities.map(e => e.entity_id)));
-  };
-
-  const handleDeleteEntities = async () => {
-    if (selectedEntityIds.size === 0) return;
-    
-    let message = `Delete ${selectedEntityIds.size} entity(ies) permanently? This cannot be undone.\n\n灭它全家老小？`;
-    
-    message += `\n\nSelected IDs:\n${[...selectedEntityIds].slice(0, 5).join('\n')}` +
-      (selectedEntityIds.size > 5 ? `\n... and ${selectedEntityIds.size - 5} more` : '');
-
-    const confirmed = confirm(message);
-    
-    if (!confirmed) return;
-    
-    setEntityDeleting(true);
-    setEntityError(null);
-    setEntityDeleteResult(null);
-    
-    try {
-      const result = await deleteEntitiesBatch([...selectedEntityIds]);
-      setEntityDeleteResult(result);
-      
-      if (result.deleted_count > 0) {
-        const data = await getOrphanEntities(entityLimit);
-        setOrphanEntities(data);
-        setSelectedEntityIds(new Set());
-      }
-    } catch (err) {
-      setEntityError(err.response?.data?.detail || err.message || 'Failed to delete entities');
-    } finally {
-      setEntityDeleting(false);
     }
   };
 
-  const getEntityTypeColor = (type) => {
-    const colors = {
-      'Character': 'text-rose-400 bg-rose-950/30',
-      'Location': 'text-emerald-400 bg-emerald-950/30',
-      'Faction': 'text-amber-400 bg-amber-950/30',
-      'Event': 'text-sky-400 bg-sky-950/30',
-      'Item': 'text-violet-400 bg-violet-950/30',
-      'Relationship': 'text-pink-400 bg-pink-950/30',
-    };
-    return colors[type] || 'text-slate-400 bg-slate-800/30';
+  const deprecated = orphans.filter(o => o.category === 'deprecated');
+  const orphaned = orphans.filter(o => o.category === 'orphaned');
+
+  const renderCard = (item) => {
+    const isExpanded = expandedId === item.id;
+    const detail = detailData[item.id];
+    const isLoadingDetail = detailLoading === item.id;
+    const isChecked = selectedIds.has(item.id);
+
+    return (
+      <div key={item.id} className="group relative bg-[#0C0C16] border border-slate-700/40 hover:border-slate-600/60 rounded-lg transition-all">
+        {/* Clickable Card Header */}
+        <div
+          className="flex items-start gap-3 p-4 cursor-pointer select-none"
+          onClick={() => handleExpand(item.id)}
+        >
+          {/* Checkbox */}
+          <button
+            onClick={(e) => toggleSelect(item.id, e)}
+            className="mt-0.5 flex-shrink-0 p-0.5 rounded transition-colors hover:bg-slate-700/30"
+          >
+            {isChecked ? (
+              <CheckSquare size={18} className="text-indigo-400" />
+            ) : (
+              <Square size={18} className="text-slate-600 group-hover:text-slate-500" />
+            )}
+          </button>
+
+          {/* Content area */}
+          <div className="flex-1 min-w-0">
+            {/* Top row: badges + time */}
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <span className="text-[11px] font-mono text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded">
+                #{item.id}
+              </span>
+              {item.category === 'deprecated' ? (
+                <span className="text-[10px] font-mono text-amber-300 bg-amber-900/40 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  <Archive size={9} /> deprecated
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono text-rose-300 bg-rose-900/40 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  <Unlink size={9} /> orphaned
+                </span>
+              )}
+              {item.migrated_to && (
+                <span className="text-[10px] font-mono text-indigo-300 bg-indigo-900/30 px-1.5 py-0.5 rounded">
+                  → #{item.migrated_to}
+                </span>
+              )}
+              <span className="text-[11px] text-slate-500">
+                {item.created_at ? format(new Date(item.created_at), 'yyyy-MM-dd HH:mm') : 'Unknown'}
+              </span>
+            </div>
+
+            {/* Migration target paths */}
+            {item.migration_target && item.migration_target.paths.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                <ArrowRight size={12} className="text-indigo-400/70 flex-shrink-0" />
+                {item.migration_target.paths.map((p, i) => (
+                  <span key={i} className="text-[11px] font-mono text-indigo-300/90 bg-indigo-900/25 px-1.5 py-0.5 rounded border border-indigo-800/30">
+                    {p}
+                  </span>
+                ))}
+              </div>
+            )}
+            {item.migration_target && item.migration_target.paths.length === 0 && (
+              <div className="flex items-center gap-1.5 mb-2">
+                <ArrowRight size={12} className="text-slate-500 flex-shrink-0" />
+                <span className="text-[11px] text-slate-500 italic">
+                  target #{item.migration_target.id} also has no paths
+                </span>
+              </div>
+            )}
+
+            {/* Content snippet */}
+            <div className="bg-slate-900/60 rounded p-2.5 text-[12px] text-slate-400 font-mono leading-relaxed line-clamp-3">
+              {item.content_snippet}
+            </div>
+          </div>
+
+          {/* Expand indicator */}
+          <div className="mt-1 flex-shrink-0 text-slate-500">
+            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </div>
+        </div>
+
+        {/* Expanded Detail */}
+        {isExpanded && (
+          <div className="border-t border-slate-700/30 p-5 bg-[#09090F]">
+            {isLoadingDetail ? (
+              <div className="flex items-center gap-3 text-slate-500 py-4">
+                <div className="w-4 h-4 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
+                <span className="text-xs">Loading full content...</span>
+              </div>
+            ) : detail?.error ? (
+              <div className="text-rose-400 text-xs py-2">Error: {detail.error}</div>
+            ) : detail ? (
+              <div className="space-y-4">
+                {/* Full content */}
+                <div>
+                  <h4 className="text-[11px] uppercase tracking-widest text-slate-500 mb-2 font-semibold">
+                    {detail.migration_target ? 'Old Version (This Memory)' : 'Full Content'}
+                  </h4>
+                  <div className="bg-[#060610] rounded p-4 border border-slate-800/60 text-[12px] text-slate-300 font-mono leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto custom-scrollbar">
+                    {detail.content}
+                  </div>
+                </div>
+
+                {/* Diff with migration target */}
+                {detail.migration_target && (
+                  <div>
+                    <h4 className="text-[11px] uppercase tracking-widest text-slate-500 mb-2 font-semibold flex items-center gap-2">
+                      <span>Diff: #{item.id} → #{detail.migration_target.id}</span>
+                      {detail.migration_target.paths.length > 0 && (
+                        <span className="text-indigo-400/70 normal-case tracking-normal font-normal">
+                          ({detail.migration_target.paths[0]})
+                        </span>
+                      )}
+                    </h4>
+                    <div className="bg-[#060610] rounded border border-slate-800/60 p-4 max-h-96 overflow-y-auto custom-scrollbar">
+                      <DiffViewer
+                        oldText={detail.content}
+                        newText={detail.migration_target.content}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Section header with select-all checkbox
+  const renderSectionHeader = (icon, label, color, items) => {
+    const allSelected = items.length > 0 && items.every(i => selectedIds.has(i.id));
+    const someSelected = items.some(i => selectedIds.has(i.id));
+
+    return (
+      <div className="flex items-center gap-3 mb-4">
+        <button
+          onClick={() => toggleSelectAll(items)}
+          className="p-0.5 rounded transition-colors hover:bg-slate-700/30"
+          title={allSelected ? "Deselect all" : "Select all"}
+        >
+          {allSelected ? (
+            <CheckSquare size={16} className={color} />
+          ) : someSelected ? (
+            <Minus size={16} className={color} />
+          ) : (
+            <Square size={16} className="text-slate-600" />
+          )}
+        </button>
+        {icon}
+        <h3 className={`text-xs font-bold uppercase tracking-widest ${color}`}>
+          {label}
+        </h3>
+        <span className="text-[11px] text-slate-500 bg-slate-800/80 px-2 py-0.5 rounded-full">
+          {items.length}
+        </span>
+      </div>
+    );
   };
 
   return (
-    <div className="flex h-full bg-slate-950 text-slate-200 overflow-hidden font-sans">
-      {/* Sidebar - Controls */}
-      <div className="w-80 flex-shrink-0 border-r border-slate-800 flex flex-col bg-slate-900/50">
-        {/* Header */}
-        <div className="p-4 border-b border-slate-800 bg-slate-900">
-          <h1 className="text-lg font-bold text-amber-400 flex items-center gap-2">
-            <Sparkles className="w-5 h-5" />
-            Brain Cleanup
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Find and remove unused nodes
+    <div className="flex h-full bg-[#07070D] text-slate-200 font-sans overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-72 flex-shrink-0 bg-[#0A0A12] border-r border-slate-700/30 flex flex-col p-6">
+        <div className="mb-8">
+          <div className="w-12 h-12 bg-amber-950/30 rounded-xl flex items-center justify-center border border-amber-800/30 mb-4 shadow-[0_0_20px_rgba(245,158,11,0.1)]">
+            <Sparkles className="text-amber-400" size={24} />
+          </div>
+          <h1 className="text-xl font-bold text-slate-100 mb-2">Brain Cleanup</h1>
+          <p className="text-[12px] text-slate-400 leading-relaxed">
+            Find and clean up orphan memories — deprecated versions from updates
+            and unreachable memories from path deletions.
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="p-2 border-b border-slate-800 flex gap-1">
-          <button
-            onClick={() => setActiveTab('states')}
-            className={clsx(
-              "flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors",
-              activeTab === 'states'
-                ? "bg-amber-900/50 text-amber-200 border border-amber-800"
-                : "bg-slate-800/50 text-slate-400 hover:text-slate-300 hover:bg-slate-800"
-            )}
-          >
-            <Layers size={14} />
-            States
-          </button>
-          <button
-            onClick={() => setActiveTab('entities')}
-            className={clsx(
-              "flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors",
-              activeTab === 'entities'
-                ? "bg-rose-900/50 text-rose-200 border border-rose-800"
-                : "bg-slate-800/50 text-slate-400 hover:text-slate-300 hover:bg-slate-800"
-            )}
-          >
-            <Ghost size={14} />
-            Entities
-          </button>
+        <div className="space-y-3 mt-auto">
+          <div className="bg-slate-800/40 rounded-lg p-4 border border-slate-700/40">
+            <div className="text-slate-400 text-xs uppercase font-bold tracking-wider mb-1">Deprecated</div>
+            <div className="text-3xl font-mono text-amber-400">{deprecated.length}</div>
+            <div className="text-slate-500 text-[11px] mt-1">old versions from updates</div>
+          </div>
+          <div className="bg-slate-800/40 rounded-lg p-4 border border-slate-700/40">
+            <div className="text-slate-400 text-xs uppercase font-bold tracking-wider mb-1">Orphaned</div>
+            <div className="text-3xl font-mono text-rose-400">{orphaned.length}</div>
+            <div className="text-slate-500 text-[11px] mt-1">unreachable (no paths)</div>
+          </div>
         </div>
-
-        {/* State Cleanup Controls */}
-        {activeTab === 'states' && (
-          <>
-            <div className="p-4 space-y-4 border-b border-slate-800">
-              <div>
-                <label className="text-xs text-slate-500 uppercase font-bold mb-2 block">
-                  Mode
-                </label>
-                <select
-                  className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none"
-                  value={stateMode}
-                  onChange={(e) => setStateMode(e.target.value)}
-                >
-                  <option value="in_zero">No Incoming Edges (宽松)</option>
-                  <option value="all_zero">No Edges At All (严格)</option>
-                </select>
-                <p className="text-xs text-slate-600 mt-1">
-                  {stateMode === 'in_zero' 
-                    ? '没有入边的 State（可能有出边但没人引用）' 
-                    : '完全孤立的 State（无任何业务边）'}
-                </p>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 uppercase font-bold mb-2 block">
-                  Limit
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="500"
-                  className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm focus:border-amber-500 outline-none"
-                  value={stateLimit}
-                  onChange={(e) => setStateLimit(Math.max(1, Math.min(500, parseInt(e.target.value) || 100)))}
-                />
-              </div>
-
-              <button
-                onClick={handleSearchStates}
-                disabled={stateLoading}
-                className={clsx(
-                  "w-full flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors",
-                  stateLoading
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                    : "bg-amber-900/50 hover:bg-amber-800/50 text-amber-200 border border-amber-800"
-                )}
-              >
-                {stateLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                {stateLoading ? 'Searching...' : 'Search Orphan States'}
-              </button>
-            </div>
-
-            {/* Stats */}
-            {orphanStates && (
-              <div className="p-4 border-b border-slate-800">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-amber-400">{orphanStates.count}</div>
-                    <div className="text-xs text-slate-500">Found</div>
-                  </div>
-                  <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-rose-400">{selectedStateIds.size}</div>
-                    <div className="text-xs text-slate-500">Selected</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Selection Controls */}
-            {orphanStates?.states?.length > 0 && (
-              <div className="p-4 border-b border-slate-800 space-y-2">
-                <div className="flex gap-2">
-                  <button
-                    onClick={selectAllStates}
-                    className="flex-1 text-xs py-1.5 px-2 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
-                  >
-                    Select Non-Current
-                  </button>
-                  <button
-                    onClick={() => setSelectedStateIds(new Set())}
-                    className="flex-1 text-xs py-1.5 px-2 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
-                  >
-                    Clear Selection
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Delete Button */}
-            {selectedStateIds.size > 0 && (
-              <div className="p-4 border-t border-slate-800 bg-slate-900">
-                <button
-                  onClick={handleDeleteStates}
-                  disabled={stateDeleting}
-                  className={clsx(
-                    "w-full flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors",
-                    stateDeleting
-                      ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                      : "bg-rose-900/50 hover:bg-rose-800/50 text-rose-200 border border-rose-800"
-                  )}
-                >
-                  {stateDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                  {stateDeleting ? 'Deleting...' : `Delete ${selectedStateIds.size} State(s)`}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Entity Cleanup Controls */}
-        {activeTab === 'entities' && (
-          <>
-            <div className="p-4 space-y-4 border-b border-slate-800">
-              <div className="p-3 bg-rose-950/20 border border-rose-900/50 rounded-lg">
-                <p className="text-xs text-rose-300/80">
-                  <Ghost className="w-3 h-3 inline mr-1" />
-                  孤儿 Entity 是没有任何 State 的光杆司令。
-                  通常是删完所有 State 后留下的空壳。
-                </p>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 uppercase font-bold mb-2 block">
-                  Limit
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="500"
-                  className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm focus:border-rose-500 outline-none"
-                  value={entityLimit}
-                  onChange={(e) => setEntityLimit(Math.max(1, Math.min(500, parseInt(e.target.value) || 100)))}
-                />
-              </div>
-
-              <button
-                onClick={handleSearchEntities}
-                disabled={entityLoading}
-                className={clsx(
-                  "w-full flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors",
-                  entityLoading
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                    : "bg-rose-900/50 hover:bg-rose-800/50 text-rose-200 border border-rose-800"
-                )}
-              >
-                {entityLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                {entityLoading ? 'Searching...' : 'Search Orphan Entities'}
-              </button>
-            </div>
-
-            {/* Stats */}
-            {orphanEntities && (
-              <div className="p-4 border-b border-slate-800">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-rose-400">{orphanEntities.count}</div>
-                    <div className="text-xs text-slate-500">Found</div>
-                  </div>
-                  <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-rose-400">{selectedEntityIds.size}</div>
-                    <div className="text-xs text-slate-500">Selected</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Selection Controls */}
-            {orphanEntities?.entities?.length > 0 && (
-              <div className="p-4 border-b border-slate-800 space-y-2">
-                <div className="flex gap-2">
-                  <button
-                    onClick={selectAllEntities}
-                    className="flex-1 text-xs py-1.5 px-2 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
-                  >
-                    Select All
-                  </button>
-                  <button
-                    onClick={() => setSelectedEntityIds(new Set())}
-                    className="flex-1 text-xs py-1.5 px-2 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
-                  >
-                    Clear Selection
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Delete Button */}
-            {selectedEntityIds.size > 0 && (
-              <div className="p-4 border-t border-slate-800 bg-slate-900">
-                <button
-                  onClick={handleDeleteEntities}
-                  disabled={entityDeleting}
-                  className={clsx(
-                    "w-full flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors",
-                    entityDeleting
-                      ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                      : "bg-rose-900/50 hover:bg-rose-800/50 text-rose-200 border border-rose-800"
-                  )}
-                >
-                  {entityDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                  {entityDeleting ? 'Deleting...' : `灭掉 ${selectedEntityIds.size} 个 Entity`}
-                </button>
-              </div>
-            )}
-          </>
-        )}
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 bg-slate-950">
-        {/* State Tab Content */}
-        {activeTab === 'states' && (
-          <>
-            {/* Result Banner */}
-            {stateDeleteResult && (
-              <div className={clsx(
-                "px-6 py-3 flex items-center gap-3 border-b",
-                stateDeleteResult.failed_count === 0
-                  ? "bg-emerald-950/30 border-emerald-900 text-emerald-300"
-                  : "bg-amber-950/30 border-amber-900 text-amber-300"
-              )}>
-                {stateDeleteResult.failed_count === 0 ? (
-                  <CheckCircle2 size={18} />
+      <div className="flex-1 flex flex-col min-w-0 bg-[#07070D] relative overflow-hidden">
+        {/* Header with batch actions */}
+        <div className="h-14 flex items-center justify-between px-8 border-b border-slate-700/30 bg-[#07070D]/90 backdrop-blur-md sticky top-0 z-10">
+          <h2 className="text-sm font-bold text-slate-300 uppercase tracking-widest flex items-center gap-2">
+            <Trash2 size={14} /> Orphan Memories
+          </h2>
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                onClick={handleBatchDelete}
+                disabled={batchDeleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-rose-900/40 text-rose-300 hover:bg-rose-900/60 border border-rose-800/40 transition-colors disabled:opacity-50"
+              >
+                {batchDeleting ? (
+                  <div className="w-3 h-3 border-2 border-rose-400/30 border-t-rose-400 rounded-full animate-spin"></div>
                 ) : (
-                  <AlertCircle size={18} />
+                  <Trash2 size={13} />
                 )}
-                <span className="text-sm">
-                  Deleted {stateDeleteResult.deleted_count} state(s).
-                  {stateDeleteResult.failed_count > 0 && (
-                    <span className="text-rose-400 ml-2">
-                      {stateDeleteResult.failed_count} failed.
-                    </span>
+                Delete {selectedIds.size} selected
+              </button>
+            )}
+            <button
+              onClick={loadOrphans}
+              className="p-2 text-slate-400 hover:text-indigo-400 hover:bg-slate-700/40 rounded-full transition-all"
+              title="Refresh"
+            >
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center h-64 text-slate-500 gap-4">
+              <div className="w-6 h-6 border-2 border-amber-500/30 border-t-amber-500 rounded-full animate-spin"></div>
+              <span className="text-xs tracking-widest uppercase">Scanning for orphans...</span>
+            </div>
+          ) : error ? (
+            <div className="text-rose-400 bg-rose-950/20 border border-rose-800/40 p-6 rounded-lg flex items-center gap-4">
+              <AlertTriangle size={24} />
+              <div>
+                <h3 className="font-bold text-rose-300">Error</h3>
+                <p className="text-sm text-rose-400/80">{error}</p>
+              </div>
+            </div>
+          ) : orphans.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-6 select-none">
+              <Sparkles size={64} className="opacity-30" />
+              <p className="text-lg font-light text-slate-500">System Clean</p>
+              <p className="text-xs uppercase tracking-widest text-slate-600">No orphan memories detected</p>
+            </div>
+          ) : (
+            <div className="max-w-5xl mx-auto space-y-8">
+              {/* Deprecated Section */}
+              {deprecated.length > 0 && (
+                <section>
+                  {renderSectionHeader(
+                    <Archive size={16} className="text-amber-400/80" />,
+                    "Deprecated Versions",
+                    "text-amber-400/80",
+                    deprecated
                   )}
-                </span>
-                {stateDeleteResult.failed?.length > 0 && (
-                  <button
-                    onClick={() => alert(stateDeleteResult.failed.map(f => `${f.state_id}: ${f.error}`).join('\n'))}
-                    className="ml-auto text-xs underline hover:no-underline"
-                  >
-                    View Errors
-                  </button>
-                )}
-              </div>
-            )}
+                  <div className="space-y-2">
+                    {deprecated.map(renderCard)}
+                  </div>
+                </section>
+              )}
 
-            {/* Error Banner */}
-            {stateError && (
-              <div className="px-6 py-3 bg-rose-950/30 border-b border-rose-900 text-rose-300 flex items-center gap-3">
-                <AlertCircle size={18} />
-                <span className="text-sm">{stateError}</span>
-              </div>
-            )}
-
-            {/* State List */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {!orphanStates ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
-                  <HardDrive size={64} className="opacity-20" />
-                  <p>Click "Search Orphan States" to find unused states</p>
-                  <p className="text-xs text-slate-700 max-w-md text-center">
-                    This tool helps you clean up old State versions that are no longer 
-                    referenced by any edges. Think of it as taking out the garbage from 
-                    Nocturne's memory.
-                  </p>
-                </div>
-              ) : orphanStates.states.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-emerald-600 gap-4">
-                  <CheckCircle2 size={64} className="opacity-40" />
-                  <p>No orphan states found!</p>
-                  <p className="text-xs text-slate-600">Memory is clean ✨</p>
-                </div>
-              ) : (
-                <div className="max-w-5xl mx-auto space-y-2">
-                  {orphanStates.states.map((state) => (
-                    <div
-                      key={state.state_id}
-                      onClick={() => toggleStateSelection(state.state_id)}
-                      className={clsx(
-                        "flex items-start gap-4 p-4 rounded-lg border transition-all cursor-pointer",
-                        selectedStateIds.has(state.state_id)
-                          ? "bg-rose-950/20 border-rose-800"
-                          : state.is_current
-                            ? "bg-amber-950/10 border-slate-800 hover:border-amber-800/50"
-                            : "bg-slate-900/30 border-slate-800 hover:border-slate-700"
-                      )}
-                    >
-                      {/* Checkbox */}
-                      <div className="pt-0.5">
-                        <div className={clsx(
-                          "w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
-                          selectedStateIds.has(state.state_id)
-                            ? "border-rose-500 bg-rose-500"
-                            : state.is_current
-                              ? "border-slate-700 bg-slate-800/50"
-                              : "border-slate-600 hover:border-slate-500"
-                        )}>
-                          {selectedStateIds.has(state.state_id) && (
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 12 12">
-                              <path d="M10.28 2.28L3.989 8.575 1.695 6.28A1 1 0 00.28 7.695l3 3a1 1 0 001.414 0l7-7A1 1 0 0010.28 2.28z" />
-                            </svg>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-sm text-slate-300">
-                            {state.state_id}
-                          </span>
-                          <span className={clsx(
-                            "text-xs px-2 py-0.5 rounded-full",
-                            getEntityTypeColor(state.entity_type)
-                          )}>
-                            {state.entity_type}
-                          </span>
-                          {state.is_current && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-950/50 text-indigo-400 border border-indigo-800">
-                              CURRENT
-                            </span>
-                          )}
-                        </div>
-                        
-                        <div className="text-sm text-slate-400 mb-2">
-                          <span className="font-medium text-slate-300">{state.name}</span>
-                          <span className="mx-2 text-slate-600">•</span>
-                          <span>v{state.version}</span>
-                          <span className="mx-2 text-slate-600">•</span>
-                          <span className="text-xs">
-                            in:{state.in_count} out:{state.out_count}
-                          </span>
-                        </div>
-                        
-                        <p className="text-xs text-slate-500 line-clamp-2 font-mono">
-                          {state.content_snippet || '(empty content)'}
-                        </p>
-                      </div>
-
-                      {/* Layers icon to show version */}
-                      <div className="flex flex-col items-center text-slate-600">
-                        <Layers size={16} />
-                        <span className="text-xs mt-1">v{state.version}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {/* Orphaned Section */}
+              {orphaned.length > 0 && (
+                <section>
+                  {renderSectionHeader(
+                    <Unlink size={16} className="text-rose-400/80" />,
+                    "Orphaned Memories",
+                    "text-rose-400/80",
+                    orphaned
+                  )}
+                  <div className="space-y-2">
+                    {orphaned.map(renderCard)}
+                  </div>
+                </section>
               )}
             </div>
-          </>
-        )}
-
-        {/* Entity Tab Content */}
-        {activeTab === 'entities' && (
-          <>
-            {/* Result Banner */}
-            {entityDeleteResult && (
-              <div className={clsx(
-                "px-6 py-3 flex items-center gap-3 border-b",
-                entityDeleteResult.failed_count === 0
-                  ? "bg-emerald-950/30 border-emerald-900 text-emerald-300"
-                  : "bg-amber-950/30 border-amber-900 text-amber-300"
-              )}>
-                {entityDeleteResult.failed_count === 0 ? (
-                  <CheckCircle2 size={18} />
-                ) : (
-                  <AlertCircle size={18} />
-                )}
-                <span className="text-sm">
-                  灭掉了 {entityDeleteResult.deleted_count} 个 entity.
-                  {entityDeleteResult.failed_count > 0 && (
-                    <span className="text-rose-400 ml-2">
-                      {entityDeleteResult.failed_count} 个失败了.
-                    </span>
-                  )}
-                </span>
-                {entityDeleteResult.failed?.length > 0 && (
-                  <button
-                    onClick={() => alert(entityDeleteResult.failed.map(f => `${f.entity_id}: ${f.error}`).join('\n'))}
-                    className="ml-auto text-xs underline hover:no-underline"
-                  >
-                    View Errors
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Error Banner */}
-            {entityError && (
-              <div className="px-6 py-3 bg-rose-950/30 border-b border-rose-900 text-rose-300 flex items-center gap-3">
-                <AlertCircle size={18} />
-                <span className="text-sm">{entityError}</span>
-              </div>
-            )}
-
-            {/* Entity List */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {!orphanEntities ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
-                  <Ghost size={64} className="opacity-20" />
-                  <p>Click "Search Orphan Entities" to find empty shells</p>
-                  <p className="text-xs text-slate-700 max-w-md text-center">
-                    孤儿 Entity 是删完所有 State 后剩下的空壳。
-                    它们就像没有灵魂的躯壳，占着茅坑不拉屎。
-                    先用 States tab 删完无用的 State，再来这里处决光杆司令。
-                  </p>
-                </div>
-              ) : orphanEntities.entities.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-emerald-600 gap-4">
-                  <CheckCircle2 size={64} className="opacity-40" />
-                  <p>No orphan entities found!</p>
-                  <p className="text-xs text-slate-600">所有 Entity 都有 State 在守护 ✨</p>
-                </div>
-              ) : (
-                <div className="max-w-5xl mx-auto space-y-2">
-                  {orphanEntities.entities.map((entity) => (
-                    <div
-                      key={entity.entity_id}
-                      onClick={() => toggleEntitySelection(entity.entity_id)}
-                      className={clsx(
-                        "flex items-start gap-4 p-4 rounded-lg border transition-all cursor-pointer",
-                        selectedEntityIds.has(entity.entity_id)
-                          ? "bg-rose-950/20 border-rose-800"
-                          : "bg-slate-900/30 border-slate-800 hover:border-slate-700"
-                      )}
-                    >
-                      {/* Checkbox */}
-                      <div className="pt-0.5">
-                        <div className={clsx(
-                          "w-5 h-5 rounded border-2 flex items-center justify-center transition-colors",
-                          selectedEntityIds.has(entity.entity_id)
-                            ? "border-rose-500 bg-rose-500"
-                            : "border-slate-600 hover:border-slate-500"
-                        )}>
-                          {selectedEntityIds.has(entity.entity_id) && (
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 12 12">
-                              <path d="M10.28 2.28L3.989 8.575 1.695 6.28A1 1 0 00.28 7.695l3 3a1 1 0 001.414 0l7-7A1 1 0 0010.28 2.28z" />
-                            </svg>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-sm text-slate-300">
-                            {entity.entity_id}
-                          </span>
-                          <span className={clsx(
-                            "text-xs px-2 py-0.5 rounded-full",
-                            getEntityTypeColor(entity.node_type)
-                          )}>
-                            {entity.node_type}
-                          </span>
-                        </div>
-                        
-                        <div className="text-sm text-slate-400">
-                          <span className="font-medium text-slate-300">{entity.name}</span>
-                        </div>
-                      </div>
-
-                      {/* Ghost icon */}
-                      <div className="flex flex-col items-center text-slate-600">
-                        <Ghost size={16} />
-                        <span className="text-xs mt-1">空壳</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
 }
-
-export default MaintenancePage;

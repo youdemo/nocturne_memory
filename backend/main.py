@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from api import review_router, browse_router
+from api import review_router, browse_router, maintenance_router
 from db import get_sqlite_client, close_sqlite_client
 
 
@@ -45,6 +45,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(review_router)
 app.include_router(browse_router)
+app.include_router(maintenance_router)
 
 
 @app.get("/")
