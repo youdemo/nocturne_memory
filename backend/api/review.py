@@ -129,17 +129,17 @@ async def _get_memory_by_path_from_data(data: dict):
 
 async def _diff_path_create(snapshot: dict, resource_id: str) -> dict:
     """Diff for path creation (create_memory). Rollback = delete memory + path."""
-    snapshot_data = {"content": None, "importance": None, "disclosure": None}
+    snapshot_data = {"content": None, "priority": None, "disclosure": None}
     current_memory = await _get_memory_by_path_from_data(snapshot["data"])
     
     if not current_memory:
-        current_data = {"content": "[DELETED]", "importance": None, "disclosure": None}
+        current_data = {"content": "[DELETED]", "priority": None, "disclosure": None}
         summary = "Created then deleted"
         has_changes = False
     else:
         current_data = {
             "content": current_memory.get("content", ""),
-            "importance": current_memory.get("importance"),
+            "priority": current_memory.get("priority"),
             "disclosure": current_memory.get("disclosure")
         }
         line_count = len(current_data["content"].splitlines())
@@ -158,18 +158,18 @@ async def _diff_path_create(snapshot: dict, resource_id: str) -> dict:
 async def _diff_path_create_alias(snapshot: dict, resource_id: str) -> dict:
     """Diff for alias creation. Rollback = remove alias path only."""
     target_uri = snapshot["data"].get("target_uri", "unknown")
-    snapshot_data = {"content": None, "importance": None, "disclosure": None}
+    snapshot_data = {"content": None, "priority": None, "disclosure": None}
     
     current_memory = await _get_memory_by_path_from_data(snapshot["data"])
     
     if not current_memory:
-        current_data = {"content": "[ALIAS REMOVED]", "importance": None, "disclosure": None}
+        current_data = {"content": "[ALIAS REMOVED]", "priority": None, "disclosure": None}
         summary = "Alias created then removed"
         has_changes = False
     else:
         current_data = {
             "content": current_memory.get("content", ""),
-            "importance": current_memory.get("importance"),
+            "priority": current_memory.get("priority"),
             "disclosure": current_memory.get("disclosure")
         }
         summary = f"Alias created → {target_uri} (rollback = remove alias)"
@@ -234,18 +234,18 @@ async def _diff_path_delete(snapshot: dict, resource_id: str) -> dict:
     
     snapshot_data = {
         "content": old_content,
-        "importance": snapshot["data"].get("importance"),
+        "priority": snapshot["data"].get("priority", snapshot["data"].get("importance")),
         "disclosure": snapshot["data"].get("disclosure")
     }
     
     current_memory = await _get_memory_by_path_from_data(snapshot["data"])
     
     if not current_memory:
-        current_data = {"content": "[DELETED]", "importance": None, "disclosure": None}
+        current_data = {"content": "[DELETED]", "priority": None, "disclosure": None}
     else:
         current_data = {
             "content": current_memory.get("content", ""),
-            "importance": current_memory.get("importance"),
+            "priority": current_memory.get("priority"),
             "disclosure": current_memory.get("disclosure")
         }
     
@@ -267,28 +267,28 @@ async def _diff_path_delete(snapshot: dict, resource_id: str) -> dict:
 
 
 async def _diff_path_modify_meta(snapshot: dict, resource_id: str) -> dict:
-    """Diff for path metadata change (importance/disclosure). Rollback = restore metadata."""
+    """Diff for path metadata change (priority/disclosure). Rollback = restore metadata."""
     snapshot_data = {
         "content": None,
-        "importance": snapshot["data"].get("importance"),
+        "priority": snapshot["data"].get("priority", snapshot["data"].get("importance")),
         "disclosure": snapshot["data"].get("disclosure")
     }
     
     current_memory = await _get_memory_by_path_from_data(snapshot["data"])
     
     if not current_memory:
-        current_data = {"content": None, "importance": None, "disclosure": None}
+        current_data = {"content": None, "priority": None, "disclosure": None}
         summary = "Path no longer exists"
         has_changes = False
     else:
         current_data = {
             "content": None,
-            "importance": current_memory.get("importance"),
+            "priority": current_memory.get("priority"),
             "disclosure": current_memory.get("disclosure")
         }
         
         meta_changes = []
-        for key in ["importance", "disclosure"]:
+        for key in ["priority", "disclosure"]:
             if snapshot_data.get(key) != current_data.get(key):
                 meta_changes.append(f"{key}: {snapshot_data.get(key)} → {current_data.get(key)}")
         
@@ -325,7 +325,7 @@ async def _diff_memory_content(snapshot: dict, resource_id: str) -> dict:
     
     snapshot_data = {
         "content": old_content,
-        "importance": None,
+        "priority": None,
         "disclosure": None
     }
     
@@ -347,11 +347,11 @@ async def _diff_memory_content(snapshot: dict, resource_id: str) -> dict:
                 break
     
     if not current_memory:
-        current_data = {"content": "[PATH DELETED]", "importance": None, "disclosure": None}
+        current_data = {"content": "[PATH DELETED]", "priority": None, "disclosure": None}
     else:
         current_data = {
             "content": current_memory.get("content", ""),
-            "importance": None,
+            "priority": None,
             "disclosure": None
         }
     
@@ -472,7 +472,7 @@ async def _rollback_path(data: dict) -> dict:
             await client.restore_path(
                 path=path, domain=domain,
                 memory_id=memory_id,
-                importance=data.get("importance", 0),
+                priority=data.get("priority", data.get("importance", 0)),
                 disclosure=data.get("disclosure")
             )
             return {"restored": True, "new_version": memory_id}
@@ -480,14 +480,14 @@ async def _rollback_path(data: dict) -> dict:
             raise HTTPException(status_code=409, detail=f"Cannot restore '{uri}': {e}")
     
     elif operation_type == "modify_meta":
-        # Rollback of metadata change = restore original importance/disclosure
+        # Rollback of metadata change = restore original priority/disclosure
         current = await client.get_memory_by_path(path, domain)
         if not current:
             raise HTTPException(status_code=404, detail=f"'{uri}' no longer exists")
         
         await client.update_memory(
             path=path, domain=domain,
-            importance=data.get("importance"),
+            priority=data.get("priority", data.get("importance")),
             disclosure=data.get("disclosure")
         )
         return {"metadata_restored": True}
@@ -569,7 +569,7 @@ async def _rollback_legacy_modify(data: dict) -> dict:
     
     has_version_change = snapshot_memory_id != current.get("id")
     has_meta_change = (
-        data.get("importance") != current.get("importance") or
+        data.get("priority", data.get("importance")) != current.get("priority") or
         data.get("disclosure") != current.get("disclosure")
     )
     
@@ -585,7 +585,7 @@ async def _rollback_legacy_modify(data: dict) -> dict:
     if has_meta_change:
         await client.update_memory(
             path=path, domain=domain,
-            importance=data.get("importance"),
+            priority=data.get("priority", data.get("importance")),
             disclosure=data.get("disclosure")
         )
     
@@ -603,7 +603,7 @@ async def rollback_resource(session_id: str, resource_id: str, request: Rollback
     - create → 删除新创建的 memory 和 path
     - create_alias → 移除别名路径
     - delete → 恢复被删除的路径
-    - modify_meta → 恢复 importance/disclosure
+    - modify_meta → 恢复 priority/disclosure
 
     内容快照 (resource_type="memory"):
     - modify_content → 将 path 指回旧版本的 memory

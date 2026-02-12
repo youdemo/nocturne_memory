@@ -25,14 +25,14 @@ import clsx from 'clsx';
 const api = axios.create({ baseURL: '/api' });
 
 // --- Helper ---
-const ImportanceBadge = ({ importance, size = 'sm' }) => {
-  if (importance === null || importance === undefined) return null;
+const PriorityBadge = ({ priority, size = 'sm' }) => {
+  if (priority === null || priority === undefined) return null;
   
-  const colors = importance === 0
+  const colors = priority === 0
     ? 'bg-rose-950/40 text-rose-400 border-rose-800/40'
-    : importance <= 2
+    : priority <= 2
     ? 'bg-amber-950/30 text-amber-400 border-amber-800/30'
-    : importance <= 5
+    : priority <= 5
     ? 'bg-sky-950/30 text-sky-400 border-sky-800/30'
     : 'bg-slate-800/30 text-slate-500 border-slate-700/30';
   
@@ -43,7 +43,7 @@ const ImportanceBadge = ({ importance, size = 'sm' }) => {
   return (
     <span className={clsx("inline-flex items-center rounded border font-mono font-semibold", colors, sizeClass)}>
       <Star size={size === 'lg' ? 12 : 9} />
-      {importance}
+      {priority}
     </span>
   );
 };
@@ -117,7 +117,7 @@ const NodeGridCard = ({ node, onClick }) => (
           {node.name || node.path.split('/').pop()}
         </h3>
       </div>
-      <ImportanceBadge importance={node.importance} />
+      <PriorityBadge priority={node.priority} />
     </div>
     
     {/* Disclosure (if present) */}
@@ -162,7 +162,7 @@ export default function MemoryBrowser() {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [editDisclosure, setEditDisclosure] = useState('');
-  const [editImportance, setEditImportance] = useState(0);
+  const [editPriority, setEditPriority] = useState(0);
   const [saving, setSaving] = useState(false);
 
   // Fetch Data
@@ -176,7 +176,7 @@ export default function MemoryBrowser() {
         setData(res.data);
         setEditContent(res.data.node?.content || '');
         setEditDisclosure(res.data.node?.disclosure || '');
-        setEditImportance(res.data.node?.importance ?? 0);
+        setEditPriority(res.data.node?.priority ?? 0);
       } catch (err) {
         setError(err.response?.data?.detail || err.message);
       } finally {
@@ -196,7 +196,7 @@ export default function MemoryBrowser() {
   const startEditing = () => {
     setEditContent(data.node?.content || '');
     setEditDisclosure(data.node?.disclosure || '');
-    setEditImportance(data.node?.importance ?? 0);
+    setEditPriority(data.node?.priority ?? 0);
     setEditing(true);
   };
 
@@ -204,7 +204,7 @@ export default function MemoryBrowser() {
     setEditing(false);
     setEditContent(data.node?.content || '');
     setEditDisclosure(data.node?.disclosure || '');
-    setEditImportance(data.node?.importance ?? 0);
+    setEditPriority(data.node?.priority ?? 0);
   };
 
   const handleSave = async () => {
@@ -215,8 +215,8 @@ export default function MemoryBrowser() {
       if (editContent !== (data.node?.content || '')) {
         payload.content = editContent;
       }
-      if (editImportance !== (data.node?.importance ?? 0)) {
-        payload.importance = editImportance;
+      if (editPriority !== (data.node?.priority ?? 0)) {
+        payload.priority = editPriority;
       }
       if (editDisclosure !== (data.node?.disclosure || '')) {
         payload.disclosure = editDisclosure;
@@ -326,7 +326,7 @@ export default function MemoryBrowser() {
                                         <h1 className="text-2xl font-bold text-slate-100 tracking-tight">
                                             {node.name || path.split('/').pop()}
                                         </h1>
-                                        <ImportanceBadge importance={node.importance} size="lg" />
+                                        <PriorityBadge priority={node.priority} size="lg" />
                                     </div>
                                     
                                     {/* Disclosure */}
@@ -374,18 +374,18 @@ export default function MemoryBrowser() {
                             {/* Metadata Editor (shown in edit mode) */}
                             {editing && (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-900/50 border border-slate-800/50 rounded-xl">
-                                    {/* Importance */}
+                                    {/* Priority */}
                                     <div className="space-y-1.5">
                                         <label className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
                                             <Star size={12} />
-                                            Importance
-                                            <span className="text-slate-600 font-normal">(lower = more important)</span>
+                                            Priority
+                                            <span className="text-slate-600 font-normal">(lower = higher priority)</span>
                                         </label>
                                         <input 
                                             type="number"
                                             min="0"
-                                            value={editImportance}
-                                            onChange={e => setEditImportance(parseInt(e.target.value) || 0)}
+                                            value={editPriority}
+                                            onChange={e => setEditPriority(parseInt(e.target.value) || 0)}
                                             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-indigo-500/50 transition-colors"
                                         />
                                     </div>

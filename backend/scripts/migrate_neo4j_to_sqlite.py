@@ -141,7 +141,7 @@ async def migrate_entity(
             parent_path="",  # Root level
             content=content,
             title=entity_id,  # Use entity_id as title
-            importance=0,
+            priority=0,
             disclosure=None
         )
         
@@ -190,7 +190,7 @@ async def migrate_relationship(
             parent_path=viewer_id,
             content=full_content,
             title=target_id,
-            importance=0,
+            priority=0,
             disclosure=None
         )
         
@@ -237,7 +237,7 @@ async def migrate_chapter(
             parent_path=parent_path,
             content=content,
             title=chapter_name,
-            importance=0,
+            priority=0,
             disclosure=None
         )
         

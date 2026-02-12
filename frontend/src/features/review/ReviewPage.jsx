@@ -196,7 +196,7 @@ function ReviewPage() {
   // Custom Metadata Renderer
   const renderMetadataChanges = () => {
     if (!diffData?.snapshot_data || !diffData?.current_data) return null;
-    const metaKeys = ['importance', 'disclosure'];
+    const metaKeys = ['priority', 'disclosure'];
     const changes = metaKeys.filter(key => {
       const oldVal = diffData.snapshot_data[key];
       const newVal = diffData.current_data[key];

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/browse", tags=["browse"])
 
 class NodeUpdate(BaseModel):
     content: str | None = None
-    importance: int | None = None
+    priority: int | None = None
     disclosure: str | None = None
 
 
@@ -39,7 +39,7 @@ async def get_node(
         # Virtual Root Node
         memory = {
             "content": "",
-            "importance": 0,
+            "priority": 0,
             "disclosure": None,
             "created_at": None
         }
@@ -68,13 +68,13 @@ async def get_node(
         {
             "path": c["path"],
             "name": c["path"].split("/")[-1],  # Last segment
-            "importance": c["importance"],
+            "priority": c["priority"],
             "disclosure": c.get("disclosure"),
             "content_snippet": c["content_snippet"]
         }
         for c in children_raw
     ]
-    children.sort(key=lambda x: (x["importance"] if x["importance"] is not None else 999, x["path"]))
+    children.sort(key=lambda x: (x["priority"] if x["priority"] is not None else 999, x["path"]))
     
     # Get all aliases (other paths pointing to the same memory)
     aliases = []
@@ -97,7 +97,7 @@ async def get_node(
             "uri": f"{domain}://{path}",
             "name": path.split("/")[-1] if path else "root",
             "content": memory["content"],
-            "importance": memory["importance"],
+            "priority": memory["priority"],
             "disclosure": memory["disclosure"],
             "created_at": memory["created_at"],
             "aliases": aliases
@@ -129,7 +129,7 @@ async def update_node(
             path=path,
             domain=domain,
             content=body.content,
-            importance=body.importance,
+            priority=body.priority,
             disclosure=body.disclosure,
         )
     except ValueError as e:

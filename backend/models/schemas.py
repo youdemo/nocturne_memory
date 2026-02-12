@@ -46,7 +46,7 @@ class ResourceDiff(BaseModel):
     resource_id: str
     resource_type: str
     snapshot_time: str
-    snapshot_data: Dict[str, Any]  # 快照时的完整状态 (content, importance, disclosure)
+    snapshot_data: Dict[str, Any]  # 快照时的完整状态 (content, priority, disclosure)
     current_data: Dict[str, Any]   # 当前的完整状态
     diff_unified: str
     diff_summary: str
