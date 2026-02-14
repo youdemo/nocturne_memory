@@ -140,7 +140,7 @@ DATABASE_URL=sqlite+aiosqlite:///C:/path/to/your/agent_memory.db
 ```
 > ⚠️ **必须使用绝对路径。**
 > *   **Linux/Mac**: 在终端运行 `pwd` 获取当前路径。
-> *   **Windows**: 在 PowerShell 运行 `Get-Location` 或 `echo %cd%`。
+> *   **Windows (PowerShell)**: 运行 `Get-Location`。**Windows (CMD)**: 运行 `echo %cd%`。
 > *   相对路径会导致 MCP Server 和 Web 后端读取不同的数据库文件（一个读 A，一个读 B），这是最常见的错误。
 
 `.env` 中还有两个可选配置项：
