@@ -365,8 +365,10 @@ async def _fetch_and_format_memory(client, uri: str) -> str:
     if not memory:
         raise ValueError(f"URI '{make_uri(domain, path)}' not found.")
 
-    # Get children
-    children = await client.get_children(path, domain)
+    # Get children across ALL paths (aliases) of this memory.
+    # Once you reach a memory, the sub-memories you see depend on
+    # what the memory IS, not which path you used to get here.
+    children = await client.get_children(memory["id"])
 
     # Format output
     lines = []

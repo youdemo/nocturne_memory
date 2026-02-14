@@ -43,7 +43,7 @@ async def get_node(
             "disclosure": None,
             "created_at": None
         }
-        # Get roots as children
+        # Get roots as children (no memory_id = virtual root)
         children_raw = await client.get_children(None, domain=domain)
         breadcrumbs = [{"path": "", "label": "root"}]
     else:
@@ -53,8 +53,8 @@ async def get_node(
         if not memory:
             raise HTTPException(status_code=404, detail=f"Path not found: {domain}://{path}")
         
-        # Get children
-        children_raw = await client.get_children(path, domain=domain)
+        # Get children across all aliases of this memory
+        children_raw = await client.get_children(memory["id"])
         
         # Build breadcrumbs
         segments = path.split("/")
@@ -66,7 +66,9 @@ async def get_node(
     
     children = [
         {
+            "domain": c["domain"],
             "path": c["path"],
+            "uri": f"{c['domain']}://{c['path']}",
             "name": c["path"].split("/")[-1],  # Last segment
             "priority": c["priority"],
             "disclosure": c.get("disclosure"),

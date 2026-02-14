@@ -241,33 +241,73 @@ class SQLiteClient:
             }
 
     async def get_children(
-        self, parent_path: Optional[str] = None, domain: str = "core"
+        self, memory_id: Optional[int] = None, domain: str = "core"
     ) -> List[Dict[str, Any]]:
         """
-        Get direct children of a path.
-        If parent_path is None or empty, returns root elements (paths with no '/').
+        Get direct children of a memory node.
+
+        When memory_id is given, finds ALL paths (aliases) pointing to that
+        memory across all domains, then collects direct children under each.
+        This models human associative recall: once you reach a memory, the
+        sub-memories depend on WHAT it IS, not WHICH path you used to get here.
+
+        When memory_id is None (virtual root), returns root-level paths
+        (paths with no '/') in the given domain.
 
         Args:
-            parent_path: The parent path (e.g. "nocturne"). If None/"", gets roots.
-            domain: The domain/namespace
+            memory_id: The memory ID to find children for.
+                       If None, returns domain root elements.
+            domain: Only used when memory_id is None (root browsing).
 
         Returns:
-            List of child memories with their paths
+            List of child memories (deduplicated by domain+path),
+            sorted by priority then path.
         """
         async with self.session() as session:
-            query = (
-                select(Memory, Path)
-                .join(Path, Memory.id == Path.memory_id)
-                .where(Path.domain == domain)
-                .where(Memory.deprecated == False)
-            )
+            if memory_id is None:
+                # Virtual root: return paths with no slashes in the given domain
+                query = (
+                    select(Memory, Path)
+                    .join(Path, Memory.id == Path.memory_id)
+                    .where(Path.domain == domain)
+                    .where(Memory.deprecated == False)
+                    .where(Path.path.not_like("%/%"))
+                    .order_by(Path.priority.asc(), Path.path)
+                )
 
-            if not parent_path:
-                # Root level: Path has no slashes
-                query = query.where(Path.path.not_like("%/%"))
-            else:
-                # Child level: Path starts with parent/ but has no MORE slashes
-                # Escape parent_path for LIKE queries to avoid wildcards matching incorrect paths
+                result = await session.execute(query)
+
+                children = []
+                for memory, path_obj in result.all():
+                    children.append(
+                        {
+                            "domain": path_obj.domain,
+                            "path": path_obj.path,
+                            "name": path_obj.path.rsplit("/", 1)[-1],
+                            "content_snippet": memory.content[:100] + "..."
+                            if len(memory.content) > 100
+                            else memory.content,
+                            "priority": path_obj.priority,
+                            "disclosure": path_obj.disclosure,
+                        }
+                    )
+
+                return children
+
+            # --- memory_id provided: find children across all aliases ---
+
+            # 1. Find all paths pointing to this memory
+            parent_paths_result = await session.execute(
+                select(Path.domain, Path.path).where(Path.memory_id == memory_id)
+            )
+            parent_paths = parent_paths_result.all()
+
+            if not parent_paths:
+                return []
+
+            # 2. Build OR conditions for children under each parent path
+            child_conditions = []
+            for parent_domain, parent_path in parent_paths:
                 safe_parent = (
                     parent_path.replace("\\", "\\\\")
                     .replace("%", "\\%")
@@ -275,30 +315,44 @@ class SQLiteClient:
                 )
                 safe_prefix = f"{safe_parent}/"
 
-                query = query.where(Path.path.like(f"{safe_prefix}%", escape="\\"))
-                query = query.where(
-                    Path.path.not_like(f"{safe_prefix}%/%", escape="\\")
+                child_conditions.append(
+                    and_(
+                        Path.domain == parent_domain,
+                        Path.path.like(f"{safe_prefix}%", escape="\\"),
+                        Path.path.not_like(f"{safe_prefix}%/%", escape="\\"),
+                    )
                 )
 
-            # Order by Path.priority
-            query = query.order_by(Path.priority.asc(), Path.path)
+            # 3. Query all children in one shot
+            query = (
+                select(Memory, Path)
+                .join(Path, Memory.id == Path.memory_id)
+                .where(Memory.deprecated == False)
+                .where(or_(*child_conditions))
+                .order_by(Path.priority.asc(), Path.path)
+            )
 
             result = await session.execute(query)
 
+            # 4. Deduplicate by (domain, path)
+            seen = set()
             children = []
             for memory, path_obj in result.all():
+                key = (path_obj.domain, path_obj.path)
+                if key in seen:
+                    continue
+                seen.add(key)
+
                 children.append(
                     {
                         "domain": path_obj.domain,
                         "path": path_obj.path,
-                        "name": path_obj.path.rsplit("/", 1)[
-                            -1
-                        ],  # Last segment of path
+                        "name": path_obj.path.rsplit("/", 1)[-1],
                         "content_snippet": memory.content[:100] + "..."
                         if len(memory.content) > 100
                         else memory.content,
-                        "priority": path_obj.priority,  # From Path
-                        "disclosure": path_obj.disclosure,  # From Path
+                        "priority": path_obj.priority,
+                        "disclosure": path_obj.disclosure,
                     }
                 )
 

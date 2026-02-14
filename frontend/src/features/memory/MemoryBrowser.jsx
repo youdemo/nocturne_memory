@@ -99,10 +99,17 @@ const Breadcrumb = ({ items, onNavigate }) => (
 );
 
 // 3. Node Card (Grid View) - Redesigned
-const NodeGridCard = ({ node, onClick }) => (
+const NodeGridCard = ({ node, currentDomain, onClick }) => {
+  const isCrossDomain = node.domain && node.domain !== currentDomain;
+  return (
   <button 
     onClick={onClick}
-    className="group relative flex flex-col items-start p-5 bg-[#0A0A12] border border-slate-800/50 hover:border-indigo-500/30 rounded-xl transition-all duration-300 hover:shadow-[0_0_20px_rgba(99,102,241,0.1)] hover:-translate-y-1 text-left w-full h-full overflow-hidden"
+    className={clsx(
+      "group relative flex flex-col items-start p-5 bg-[#0A0A12] border rounded-xl transition-all duration-300 hover:shadow-[0_0_20px_rgba(99,102,241,0.1)] hover:-translate-y-1 text-left w-full h-full overflow-hidden",
+      isCrossDomain
+        ? "border-violet-800/40 hover:border-violet-500/40"
+        : "border-slate-800/50 hover:border-indigo-500/30"
+    )}
   >
     {/* Hover Gradient */}
     <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -116,6 +123,12 @@ const NodeGridCard = ({ node, onClick }) => (
         <h3 className="text-sm font-semibold text-slate-300 group-hover:text-indigo-200 transition-colors break-words line-clamp-2">
           {node.name || node.path.split('/').pop()}
         </h3>
+        {isCrossDomain && (
+          <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 text-[10px] font-mono text-violet-400/80 bg-violet-950/40 border border-violet-800/30 rounded">
+            <Link2 size={9} />
+            {node.domain}://
+          </span>
+        )}
       </div>
       <PriorityBadge priority={node.priority} />
     </div>
@@ -144,7 +157,8 @@ const NodeGridCard = ({ node, onClick }) => (
     {/* Hover arrow - absolute positioned, no layout cost */}
     <ChevronRight size={14} className="absolute bottom-4 right-4 text-indigo-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
   </button>
-);
+  );
+};
 
 
 // --- Main Page ---
@@ -442,9 +456,10 @@ export default function MemoryBrowser() {
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                 {data.children.map(child => (
                                     <NodeGridCard 
-                                        key={child.path} 
-                                        node={child} 
-                                        onClick={() => navigateTo(child.path)} 
+                                        key={`${child.domain || domain}:${child.path}`} 
+                                        node={child}
+                                        currentDomain={domain}
+                                        onClick={() => navigateTo(child.path, child.domain)} 
                                     />
                                 ))}
                             </div>
