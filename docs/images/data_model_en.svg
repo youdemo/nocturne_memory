@@ -42,8 +42,8 @@
   <rect width="100%" height="100%" fill="url(#bg-grad)" rx="10" />
 
   <!-- Title -->
-  <text x="400" y="35" font-family="Arial, sans-serif" font-size="18" fill="#f8fafc" text-anchor="middle" font-weight="bold">Data Model: Content‚ÄìPath Separation</text>
-  <text x="400" y="55" font-family="Arial, sans-serif" font-size="12" fill="#64748b" text-anchor="middle">Content and access paths stored separately, enabling version control, multi-entry aliases, and safe deletion</text>
+  <text x="400" y="35" font-family="Arial, sans-serif" font-size="18" fill="#f8fafc" text-anchor="middle" font-weight="bold">Data Model: Content-Path Separation</text>
+  <text x="400" y="55" font-family="Arial, sans-serif" font-size="12" fill="#64748b" text-anchor="middle">Memory content and access paths stored separately, enabling version control, multi-entry aliases, and safe deletion</text>
 
   <!-- ================================================================== -->
   <!-- PATHS TABLE (Left) -->
@@ -76,7 +76,7 @@
     <text x="215" y="102" font-family="'Courier New', monospace" font-size="11" fill="#c084fc" font-weight="bold">57</text>
     <text x="272" y="102" font-family="'Courier New', monospace" font-size="11" fill="#fbbf24">0</text>
 
-    <!-- Row 3: core://my_user (alias í same memory!) -->
+    <!-- Row 3: core://my_user (alias, same memory!) -->
     <text x="15" y="122" font-family="'Courier New', monospace" font-size="11" fill="#60a5fa">core</text>
     <text x="90" y="122" font-family="'Courier New', monospace" font-size="11" fill="#fbbf24">my_user</text>
     <text x="215" y="122" font-family="'Courier New', monospace" font-size="11" fill="#c084fc" font-weight="bold">57</text>
@@ -92,7 +92,7 @@
     <line x1="10" y1="155" x2="290" y2="155" stroke="#334155" stroke-width="1" stroke-dasharray="3,3"/>
     <text x="150" y="172" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Each row = one URI entry point</text>
     <text x="150" y="186" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">priority + disclosure live here</text>
-    <text x="150" y="200" font-family="Arial, sans-serif" font-size="10" fill="#fbbf24" text-anchor="middle">ë Same memory_id = Alias (not a copy)</text>
+    <text x="150" y="200" font-family="Arial, sans-serif" font-size="10" fill="#fbbf24" text-anchor="middle">Same memory_id = Alias (not a copy)</text>
 
     <!-- Key badge -->
     <rect x="10" y="212" width="60" height="18" rx="4" fill="#1e3a5f" stroke="#60a5fa" stroke-width="1"/>
@@ -116,14 +116,14 @@
     <text x="20" y="58" font-family="'Courier New', monospace" font-size="11" fill="#94a3b8">id</text>
     <text x="60" y="58" font-family="'Courier New', monospace" font-size="11" fill="#94a3b8">content</text>
     <text x="175" y="58" font-family="'Courier New', monospace" font-size="11" fill="#94a3b8">deprecated</text>
-    <text x="248" y="58" font-family="'Courier New', monospace" font-size="11" fill="#94a3b8">í</text>
+    <text x="248" y="58" font-family="'Courier New', monospace" font-size="11" fill="#94a3b8">next</text>
     <line x1="10" y1="64" x2="270" y2="64" stroke="#334155" stroke-width="1"/>
 
     <!-- Row 1: id=41 (deprecated old version) -->
     <text x="20" y="82" font-family="'Courier New', monospace" font-size="11" fill="#f87171">41</text>
     <text x="60" y="82" font-family="'Courier New', monospace" font-size="11" fill="#64748b" text-decoration="line-through">(old version)</text>
     <text x="195" y="82" font-family="'Courier New', monospace" font-size="11" fill="#f87171">true</text>
-    <text x="248" y="82" font-family="'Courier New', monospace" font-size="11" fill="#f87171">í42</text>
+    <text x="248" y="82" font-family="'Courier New', monospace" font-size="11" fill="#f87171">42</text>
 
     <!-- Row 2: id=42 (current, pointed to by path) -->
     <text x="20" y="102" font-family="'Courier New', monospace" font-size="11" fill="#4ade80" font-weight="bold">42</text>
@@ -147,7 +147,7 @@
     <line x1="10" y1="155" x2="270" y2="155" stroke="#334155" stroke-width="1" stroke-dasharray="3,3"/>
     <text x="140" y="172" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Each row = one memory content entity</text>
     <text x="140" y="186" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Content stored once, unaware of references</text>
-    <text x="140" y="200" font-family="Arial, sans-serif" font-size="10" fill="#f87171" text-anchor="middle">ë deprecated = old version (not deleted)</text>
+    <text x="140" y="200" font-family="Arial, sans-serif" font-size="10" fill="#f87171" text-anchor="middle">deprecated = old version (not deleted)</text>
 
     <!-- Key badge -->
     <rect x="10" y="212" width="60" height="18" rx="4" fill="#14332a" stroke="#4ade80" stroke-width="1"/>
@@ -156,23 +156,23 @@
   </g>
 
   <!-- ================================================================== -->
-  <!-- FK ARROWS: paths.memory_id í memories.id -->
+  <!-- FK ARROWS: paths.memory_id -> memories.id -->
   <!-- ================================================================== -->
 
-  <!-- Arrow: path "agent" í memory 42 (now row 2 at y=102+80=182) -->
+  <!-- Arrow: path "agent" -> memory 42 -->
   <line x1="350" y1="157" x2="490" y2="177" stroke="#4ade80" stroke-width="1.5" marker-end="url(#arrow-green)" stroke-dasharray="5,3" opacity="0.7"/>
 
-  <!-- Arrow: path "agent/my_user" í memory 57 -->
+  <!-- Arrow: path "agent/my_user" -> memory 57 -->
   <line x1="350" y1="177" x2="490" y2="197" stroke="#c084fc" stroke-width="1.5" marker-end="url(#arrow-blue)" stroke-dasharray="5,3" opacity="0.7"/>
 
-  <!-- Arrow: path "my_user" (alias) í memory 57 (same!) -->
+  <!-- Arrow: path "my_user" (alias) -> memory 57 (same!) -->
   <line x1="350" y1="197" x2="490" y2="197" stroke="#c084fc" stroke-width="1.5" marker-end="url(#arrow-blue)" stroke-dasharray="5,3" opacity="0.7"/>
 
-  <!-- Arrow: path "novel/ch1" í memory 89 -->
+  <!-- Arrow: path "novel/ch1" -> memory 89 -->
   <line x1="350" y1="217" x2="490" y2="217" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrow-amber)" stroke-dasharray="5,3" opacity="0.7"/>
 
   <!-- FK label -->
-  <text x="420" y="147" font-family="'Courier New', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">memory_id í</text>
+  <text x="420" y="147" font-family="'Courier New', monospace" font-size="10" fill="#94a3b8" text-anchor="middle">memory_id FK</text>
 
   <!-- ================================================================== -->
   <!-- BOTTOM: Three benefits -->
@@ -181,40 +181,40 @@
   <!-- Benefit 1: Version Control -->
   <g transform="translate(50, 355)">
     <rect x="0" y="0" width="220" height="140" rx="8" fill="#1e293b" stroke="#f87171" stroke-width="1.5" opacity="0.9"/>
-    <text x="110" y="25" font-family="Arial, sans-serif" font-size="13" fill="#fca5a5" text-anchor="middle" font-weight="bold">üõ°Ô∏è Version Control</text>
+    <text x="110" y="25" font-family="Arial, sans-serif" font-size="13" fill="#fca5a5" text-anchor="middle" font-weight="bold">Version Control</text>
     <line x1="15" y1="34" x2="205" y2="34" stroke="#334155" stroke-width="1"/>
 
     <text x="15" y="55" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">update_memory doesn't delete</text>
     <text x="15" y="72" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">old versions ‚Äî it marks them</text>
     <text x="15" y="89" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">deprecated, points path to new.</text>
-    <text x="15" y="112" font-family="Arial, sans-serif" font-size="11" fill="#fca5a5" font-weight="bold">í Humans can rollback anytime</text>
-    <text x="15" y="129" font-family="Arial, sans-serif" font-size="11" fill="#fca5a5" font-weight="bold">í AI edits boldly, you backstop</text>
+    <text x="15" y="112" font-family="Arial, sans-serif" font-size="11" fill="#fca5a5" font-weight="bold">Humans can rollback anytime</text>
+    <text x="15" y="129" font-family="Arial, sans-serif" font-size="11" fill="#fca5a5" font-weight="bold">AI edits boldly, you backstop</text>
   </g>
 
   <!-- Benefit 2: Multi-Entry Alias -->
   <g transform="translate(290, 355)">
     <rect x="0" y="0" width="220" height="140" rx="8" fill="#1e293b" stroke="#fbbf24" stroke-width="1.5" opacity="0.9"/>
-    <text x="110" y="25" font-family="Arial, sans-serif" font-size="13" fill="#fde68a" text-anchor="middle" font-weight="bold">üï∏Ô∏è Multi-Entry Alias</text>
+    <text x="110" y="25" font-family="Arial, sans-serif" font-size="13" fill="#fde68a" text-anchor="middle" font-weight="bold">Multi-Entry Alias</text>
     <line x1="15" y1="34" x2="205" y2="34" stroke="#334155" stroke-width="1"/>
 
     <text x="15" y="55" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">Same memory can be referenced</text>
     <text x="15" y="72" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">by multiple paths, each with</text>
     <text x="15" y="89" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">independent priority &amp; disclosure.</text>
-    <text x="15" y="112" font-family="Arial, sans-serif" font-size="11" fill="#fde68a" font-weight="bold">í Content stored only once</text>
-    <text x="15" y="129" font-family="Arial, sans-serif" font-size="11" fill="#fde68a" font-weight="bold">í Unlimited entry points</text>
+    <text x="15" y="112" font-family="Arial, sans-serif" font-size="11" fill="#fde68a" font-weight="bold">Content stored only once</text>
+    <text x="15" y="129" font-family="Arial, sans-serif" font-size="11" fill="#fde68a" font-weight="bold">Unlimited entry points</text>
   </g>
 
   <!-- Benefit 3: Safe Delete -->
   <g transform="translate(530, 355)">
     <rect x="0" y="0" width="220" height="140" rx="8" fill="#1e293b" stroke="#4ade80" stroke-width="1.5" opacity="0.9"/>
-    <text x="110" y="25" font-family="Arial, sans-serif" font-size="13" fill="#86efac" text-anchor="middle" font-weight="bold">üîí Safe Deletion</text>
+    <text x="110" y="25" font-family="Arial, sans-serif" font-size="13" fill="#86efac" text-anchor="middle" font-weight="bold">Safe Deletion</text>
     <line x1="15" y1="34" x2="205" y2="34" stroke="#334155" stroke-width="1"/>
 
     <text x="15" y="55" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">AI's MCP tool delete_memory</text>
     <text x="15" y="72" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">can only sever a path ‚Äî it</text>
     <text x="15" y="89" font-family="Arial, sans-serif" font-size="11" fill="#cbd5e1">cannot touch the content itself.</text>
-    <text x="15" y="112" font-family="Arial, sans-serif" font-size="11" fill="#86efac" font-weight="bold">í AI cannot truly destroy memories</text>
-    <text x="15" y="129" font-family="Arial, sans-serif" font-size="11" fill="#86efac" font-weight="bold">í Humans purge via Dashboard</text>
+    <text x="15" y="112" font-family="Arial, sans-serif" font-size="11" fill="#86efac" font-weight="bold">AI cannot truly destroy memories</text>
+    <text x="15" y="129" font-family="Arial, sans-serif" font-size="11" fill="#86efac" font-weight="bold">Humans purge via Dashboard</text>
   </g>
 
 </svg>
