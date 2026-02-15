@@ -13,6 +13,7 @@ import os
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from sqlalchemy import (
     Column,
@@ -130,11 +131,23 @@ class SQLiteClient:
         # PostgreSQL benefits from connection pooling; SQLite doesn't need it
         engine_kwargs = {"echo": False}
         if self.db_type == "postgresql":
+            parsed = urlparse(database_url)
+            is_local = parsed.hostname in ("localhost", "127.0.0.1", "::1")
+
+            connect_args = {}
+            if not is_local:
+                # Remote PostgreSQL: enable SSL and disable prepared statement
+                # cache for compatibility with PgBouncer-based poolers
+                # (e.g. Supabase, Neon).
+                connect_args["ssl"] = "require"
+                connect_args["statement_cache_size"] = 0
+
             engine_kwargs.update({
                 "pool_size": 10,
                 "max_overflow": 20,
                 "pool_recycle": 3600,  # Recycle connections after 1 hour
                 "pool_pre_ping": True,  # Verify connections before using
+                "connect_args": connect_args,
             })
 
         self.engine = create_async_engine(database_url, **engine_kwargs)
@@ -154,10 +167,30 @@ class SQLiteClient:
 
     async def init_db(self):
         """Create tables if they don't exist, and run migrations for schema changes."""
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # Migration: add migrated_to column if not present (for existing DBs)
-            await conn.run_sync(self._migrate_add_migrated_to)
+        try:
+            async with self.engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                # Migration: add migrated_to column if not present (for existing DBs)
+                await conn.run_sync(self._migrate_add_migrated_to)
+        except Exception as e:
+            db_url = self.database_url
+            # Mask password in URL for safe display
+            if "@" in db_url and ":" in db_url:
+                try:
+                    parsed = urlparse(db_url)
+                    if parsed.password:
+                        db_url = db_url.replace(f":{parsed.password}@", ":***@")
+                except Exception:
+                    pass
+            raise RuntimeError(
+                f"Failed to connect to database.\n"
+                f"  URL: {db_url}\n"
+                f"  Error: {e}\n\n"
+                f"Troubleshooting:\n"
+                f"  - Check that DATABASE_URL in your .env file is correct\n"
+                f"  - For PostgreSQL, ensure the host is reachable and the password has no unescaped special characters (& * # etc.)\n"
+                f"  - For SQLite, ensure the file path is absolute and the directory exists"
+            ) from e
 
     @staticmethod
     def _migrate_add_migrated_to(connection):
