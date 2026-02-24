@@ -24,8 +24,9 @@ from dotenv import load_dotenv, find_dotenv
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.fastmcp import FastMCP
-from db.sqlite_client import get_db_client
+from db.sqlite_client import get_db_client, close_db_client
 from db.snapshot import get_snapshot_manager
+import contextlib
 
 # Load environment variables
 # Explicitly look for .env in the parent directory (project root)
@@ -41,8 +42,21 @@ else:
     if _dotenv_path:
         load_dotenv(_dotenv_path)
 
-# Initialize FastMCP server
-mcp = FastMCP("Nocturne Memory Interface")
+
+@contextlib.asynccontextmanager
+async def lifespan(server: FastMCP):
+    """Manage database connection lifecycle within the MCP event loop."""
+    try:
+        # Initialize database ONLY after the MCP event loop has started.
+        # This prevents "Event loop is closed" errors with asyncpg.
+        db_client = get_db_client()
+        await db_client.init_db()
+        yield
+    finally:
+        await close_db_client()
+
+# Initialize FastMCP server with the lifespan hook
+mcp = FastMCP("Nocturne Memory Interface", lifespan=lifespan)
 
 # =============================================================================
 # Domain Configuration
@@ -1080,19 +1094,5 @@ async def search_memory(
 # =============================================================================
 
 
-# =============================================================================
-# Startup
-# =============================================================================
-
-
-async def startup():
-    """Initialize the database on startup."""
-    client = get_db_client()
-    await client.init_db()
-
-
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(startup())
     mcp.run()
