@@ -171,6 +171,7 @@ export default function MemoryBrowser() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState({ node: null, children: [], breadcrumbs: [] });
+  const [domains, setDomains] = useState([]);
   
   // Edit State
   const [editing, setEditing] = useState(false);
@@ -178,6 +179,11 @@ export default function MemoryBrowser() {
   const [editDisclosure, setEditDisclosure] = useState('');
   const [editPriority, setEditPriority] = useState(0);
   const [saving, setSaving] = useState(false);
+
+  // Fetch domain list
+  useEffect(() => {
+    api.get('/browse/domains').then(res => setDomains(res.data)).catch(() => {});
+  }, []);
 
   // Fetch Data
   useEffect(() => {
@@ -269,15 +275,22 @@ export default function MemoryBrowser() {
           <p className="text-[10px] text-slate-600 pl-6 uppercase tracking-wider">Neural Explorer v2.0</p>
         </div>
         
-        <div className="p-3">
+        <div className="p-3 flex-1 overflow-y-auto">
              <div className="mb-4">
                  <h3 className="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">Domains</h3>
-                 <SidebarItem 
-                    icon={Database} 
-                    label="Core Memory" 
-                    active={domain === 'core'} 
-                    onClick={() => navigateTo('', 'core')} 
-                 />
+                 {domains.map(d => (
+                   <SidebarItem
+                     key={d.domain}
+                     icon={Database}
+                     label={d.domain.charAt(0).toUpperCase() + d.domain.slice(1) + ' Memory'}
+                     active={domain === d.domain}
+                     count={d.root_count}
+                     onClick={() => navigateTo('', d.domain)}
+                   />
+                 ))}
+                 {domains.length === 0 && (
+                   <SidebarItem icon={Database} label="Core Memory" active={true} onClick={() => navigateTo('', 'core')} />
+                 )}
              </div>
         </div>
 

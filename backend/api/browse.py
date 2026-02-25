@@ -20,6 +20,28 @@ class NodeUpdate(BaseModel):
     disclosure: str | None = None
 
 
+@router.get("/domains")
+async def list_domains():
+    """Return all domains that contain at least one root-level path."""
+    from sqlalchemy import func, distinct
+
+    client = get_db_client()
+    async with client.session() as session:
+        result = await session.execute(
+            select(
+                PathModel.domain,
+                func.count(distinct(PathModel.path)).label("node_count"),
+            )
+            .where(~PathModel.path.contains("/"))
+            .group_by(PathModel.domain)
+            .order_by(PathModel.domain)
+        )
+        return [
+            {"domain": row.domain, "root_count": row.node_count}
+            for row in result.all()
+        ]
+
+
 @router.get("/node")
 async def get_node(
     path: str = Query("", description="URI path like 'nocturne' or 'nocturne/salem'"),
