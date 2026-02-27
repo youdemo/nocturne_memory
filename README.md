@@ -119,7 +119,7 @@ Nocturne 采用极简的 **SQLite/PostgreSQL + URI** 架构，拒绝复杂的向
 
 ```bash
 git clone https://github.com/Dataojitori/nocturne_memory.git
-cd nocturne-memory
+cd nocturne_memory
 pip install -r backend/requirements.txt
 ```
 > **注意**：MCP 客户端会直接调用你系统 `PATH` 中的 `python`。如果你使用虚拟环境，需要在 MCP 配置中将 `command` 指向该虚拟环境的 python 可执行文件路径。
@@ -134,7 +134,7 @@ cp .env.example .env
 
 ```ini
 # SQLite — 本地单机（默认）
-DATABASE_URL=sqlite+aiosqlite:///C:/path/to/nocturne-memory/demo.db
+DATABASE_URL=sqlite+aiosqlite:///C:/path/to/nocturne_memory/demo.db
 
 # PostgreSQL — 远程/多设备共享
 DATABASE_URL=postgresql+asyncpg://user:password@host:5432/nocturne_memory
@@ -168,10 +168,10 @@ CORE_MEMORY_URIS=core://agent,core://my_user,core://agent/my_user
 ```json
 {
   "mcpServers": {
-    "nocturne-memory": {
+    "nocturne_memory": {
       "command": "python",
       "args": [
-        "C:/absolute/path/to/nocturne-memory/backend/mcp_server.py"
+        "C:/absolute/path/to/nocturne_memory/backend/mcp_server.py"
       ]
     }
 
@@ -186,7 +186,7 @@ CORE_MEMORY_URIS=core://agent,core://my_user,core://agent/my_user
 
 ```json
 "args": [
-  "C:/path/to/nocturne-memory/backend/mcp_wrapper.py"
+  "C:/path/to/nocturne_memory/backend/mcp_wrapper.py"
 ]
 ```
 

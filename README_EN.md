@@ -118,7 +118,7 @@ Steps:
 
 ```bash
 git clone https://github.com/Dataojitori/nocturne_memory.git
-cd nocturne-memory
+cd nocturne_memory
 pip install -r backend/requirements.txt
 ```
 > **Note**: MCP clients invoke `python` directly from your system `PATH`. If you use a virtual environment, you need to point `command` in the MCP config to the python executable path of that virtual environment.
@@ -133,7 +133,7 @@ Edit `.env` and replace the path in `DATABASE_URL` with the **absolute path on y
 
 ```ini
 # SQLite — local, single-user (default)
-DATABASE_URL=sqlite+aiosqlite:///C:/path/to/nocturne-memory/demo.db
+DATABASE_URL=sqlite+aiosqlite:///C:/path/to/nocturne_memory/demo.db
 
 # PostgreSQL — remote / multi-device
 DATABASE_URL=postgresql+asyncpg://user:password@host:5432/nocturne_memory
@@ -167,10 +167,10 @@ Add the following to your AI client's (Claude Desktop, Cursor, Windsurf, OpenCod
 ```json
 {
   "mcpServers": {
-    "nocturne-memory": {
+    "nocturne_memory": {
       "command": "python",
       "args": [
-        "C:/absolute/path/to/nocturne-memory/backend/mcp_server.py"
+        "C:/absolute/path/to/nocturne_memory/backend/mcp_server.py"
       ]
     }
 
@@ -185,7 +185,7 @@ You **must** point `args` to `backend/mcp_wrapper.py`:
 
 ```json
 "args": [
-  "C:/path/to/nocturne-memory/backend/mcp_wrapper.py"
+  "C:/path/to/nocturne_memory/backend/mcp_wrapper.py"
 ]
 ```
 
